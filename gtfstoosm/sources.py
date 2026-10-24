@@ -331,19 +331,33 @@ def choose_sources(
     return list(chosen.values())
 
 
+def manual_names(source: Source) -> list[str]:
+    """File names under which a file put in the cache by hand is recognised.
+
+    The name the tool asks for, and the one the site gives it (a browser keeps it).
+    """
+    last = source.name.rsplit("/", 1)[-1]
+    return [f"{source.key}.osm.pbf", f"{last}.osm.pbf", f"{last}-latest.osm.pbf"]
+
+
 def _manual_file(cache: Path, source: Source) -> Path | None:
     """A file the user put in the cache for a source that robots may not download."""
-    path = cache / "regions" / f"{source.key}.osm.pbf"
-    return path if path.exists() else None
+    for name in manual_names(source):
+        path = cache / "regions" / name
+        if path.exists():
+            return path
+    return None
 
 
 def _hint(cache: Path, source: Source, used: Source) -> None:
+    folder = cache / "regions"
+    folder.mkdir(parents=True, exist_ok=True)
     logger.warning(
         f"A smaller file exists for this area: {source.url} ({source.provider}, "
         f"{source.name}), but the robots.txt of that site forbids robots to download "
         f".pbf files, so {used.provider} {used.name} is used instead. To use the smaller "
-        f"one, download it yourself and save it as "
-        f"{cache / 'regions' / (source.key + '.osm.pbf')}, or give it with --osm-file"
+        f"one, download it yourself (with your browser, for instance) and save it, "
+        f"keeping its name, in {folder} (or give it with --osm-file)"
     )
 
 

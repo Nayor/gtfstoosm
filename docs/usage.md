@@ -45,7 +45,8 @@ Routes whose trips have no `stop_times` are converted from their shape, with way
 
 ### Checking the feed
 
-- `--validation-report report.json`: report written by the [MobilityData GTFS validator](https://github.com/MobilityData/gtfs-validator) for this feed (see the README). The conversion stops if it contains `ERROR` notices; warnings are logged
+- `--no-validate`: do not check the feed. The full Docker image carries the [MobilityData GTFS validator](https://github.com/MobilityData/gtfs-validator) and checks every feed: the conversion stops on `ERROR` notices, warnings are logged, and the report is saved next to the result (`feed.validation.html`). Without the validator (lite image, native install) the feed is not checked
+- `--validation-report report.json`: use this validator report instead of running the validator
 - `--ignore-validation CODE [CODE...]`: error codes of the report that do not stop the conversion
 
 ### Logging

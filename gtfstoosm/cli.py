@@ -8,7 +8,9 @@ it, with the OSM data around the stops downloaded (and cached) as needed.
 import argparse
 import logging
 import os
+import shutil
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from gtfstoosm.convert import convert_gtfs_to_osm
 from gtfstoosm.modes import SUPPORTED_MODES
 from gtfstoosm.utils import parse_tag_string, slugify
 from gtfstoosm.validation import blocking_errors, log_report, read_report
+from gtfstoosm.validator import find_validator, run_validator
 
 # Largest distance (in metres) between a GTFS stop and the OSM stop it is matched to
 ONLINE_RADIUS_LIMIT = 10  # Overpass has to look around every stop: slow when large
@@ -169,10 +172,17 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
 
     checks = parser.add_argument_group("checking the feed")
     checks.add_argument(
+        "--no-validate",
+        dest="no_validate",
+        action="store_true",
+        help="Do not check the feed with the GTFS validator (the full Docker image "
+        "carries it and checks every feed)",
+    )
+    checks.add_argument(
         "--validation-report",
         dest="validation_report",
         metavar="report.json",
-        help="Report of the MobilityData GTFS validator: stop if it has errors",
+        help="Use this report of the MobilityData GTFS validator instead of running it",
     )
     checks.add_argument(
         "--ignore-validation",
@@ -216,6 +226,7 @@ def main(args: list[str] | None = None) -> int:
         logger.error("Give the GTFS feed to convert, e.g. feed.zip")
         return 1
     output_file = parsed_args.output_file or str(Path(feed).with_suffix(".osc"))
+    report_dir = None  # where the validator wrote its report, removed at the end
 
     try:
         # Validate input file
@@ -243,13 +254,32 @@ def main(args: list[str] | None = None) -> int:
             logger.error(f"OSM extract not found: {parsed_args.osm_file}")
             return 1
 
-        if parsed_args.validation_report:
+        report_path = parsed_args.validation_report
+        if not report_path and not parsed_args.no_validate:
+            if find_validator() is None:
+                logger.info(
+                    "The GTFS validator is not installed: the feed is not checked"
+                )
+            else:
+                report_dir = tempfile.mkdtemp(prefix="gtfstoosm-validation-")
+                try:
+                    report_path = str(run_validator(feed, Path(report_dir)))
+                except RuntimeError as err:
+                    logger.error(str(err))
+                    return 1
+
+        if report_path:
             try:
-                notices = read_report(parsed_args.validation_report)
+                notices = read_report(report_path)
             except (OSError, ValueError) as err:
                 logger.error(f"Cannot read the validation report: {err}")
                 return 1
             ignored = set(parsed_args.ignore_validation)
+            if report_dir and (Path(report_dir) / "report.html").exists():
+                html = Path(output_file).with_suffix(".validation.html")
+                html.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(Path(report_dir) / "report.html", html)
+                logger.info(f"Validation report: {html}")
             log_report(notices, ignored)
             if blocking_errors(notices, ignored):
                 logger.error(
@@ -305,6 +335,9 @@ def main(args: list[str] | None = None) -> int:
     except Exception as e:
         logger.error(f"Conversion failed: {str(e)}", exc_info=True)
         return 1
+    finally:
+        if report_dir:
+            shutil.rmtree(report_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

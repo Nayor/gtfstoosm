@@ -12,6 +12,7 @@ from gtfstoosm.sources import (
     OsmFrance,
     Source,
     choose_sources,
+    manual_path,
     parse_poly,
     robots_allows,
 )
@@ -259,7 +260,7 @@ class TestChoose:
             )
         assert chosen == [big]
         assert "robots.txt" in caplog.text
-        assert "osmfr-dept.osm.pbf" in caplog.text  # the name to save the file under
+        assert "keeping its name" in caplog.text
         assert "--osm-file" in caplog.text
 
     def test_a_forbidden_file_put_in_the_cache_is_used(self, tmp_path):
@@ -336,3 +337,34 @@ class TestGeofabrik:
         assert (found.provider, found.id, found.allowed) == ("geofabrik", "paca", True)
         assert provider.find(48.8, 2.3).id == "france"
         assert provider.find(-60.0, -120.0) is None
+
+
+class TestManualFiles:
+    def test_the_name_given_by_the_site_is_recognised(self, tmp_path):
+        small = Source(
+            "osmfr", "europe_france_x_hautes_alpes", "europe/france/x/hautes_alpes",
+            "https://x.org/hautes_alpes.osm.pbf", 0.5, False,
+        )  # fmt: skip
+        big = source("geofabrik", "region", 20.0)
+        (tmp_path / "regions").mkdir()
+        (tmp_path / "regions" / "hautes_alpes.osm.pbf").write_bytes(
+            b"x"
+        )  # as a browser saves it
+
+        chosen = choose_sources(
+            [(44.5, 6.3)], tmp_path, providers=[FakeProvider(small), FakeProvider(big)]
+        )
+        assert chosen == [small]
+        assert manual_path(tmp_path, small).name == "hautes_alpes.osm.pbf"
+
+    def test_the_folder_to_use_is_created_and_named(self, tmp_path, caplog):
+        small = source("osmfr", "dept", 1.0, allowed=False)
+        big = source("geofabrik", "region", 20.0)
+        with caplog.at_level(logging.WARNING):
+            choose_sources(
+                [(44.5, 6.3)],
+                tmp_path,
+                providers=[FakeProvider(small), FakeProvider(big)],
+            )
+        assert (tmp_path / "regions").is_dir()
+        assert str(tmp_path / "regions") in caplog.text

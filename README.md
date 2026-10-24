@@ -150,37 +150,37 @@ Other commands:
 
 ```bash
 docker compose run --rm convert --help                  # all options
-docker compose --profile dev run --rm test              # tests (no internet needed)
-docker compose --profile dev run --rm lint              # ruff
+docker compose --profile lite run --rm convert-lite /data/feed.zip   # without the validator
 docker compose --profile tools run --rm osmium --help   # osmium-tool
 docker compose --profile tools run --rm pfaedle -x /data/region.osm.pbf /data/feed.zip
 ```
+
+`convert` is the full image (about 830 MB): it carries Java and the GTFS validator.
+`convert-lite` (about 580 MB) leaves them out and does not check the feed.
 
 [`pfaedle`](https://github.com/ad-freiburg/pfaedle) (GPL-3.0, official image) generates
 `shapes.txt` for feeds that lack them, from an OSM extract. It writes a copy of the feed
 to `data/gtfs-out`, which you can then convert.
 
-## Checking the feed first
+## Checking the feed
 
-Run the official [MobilityData GTFS validator](https://github.com/MobilityData/gtfs-validator)
-(Apache-2.0, Java, here in its own container) on the feed, then give its report to the
-converter, which refuses feeds with errors:
+The full image checks every feed with the official
+[MobilityData GTFS validator](https://github.com/MobilityData/gtfs-validator)
+(Apache-2.0, a Java program, version 8.0.1) before converting it. Every `ERROR` notice
+stops the conversion; warnings are only logged. The human-readable report is saved next to
+the result (`feed.validation.html`).
 
-```bash
-docker compose --profile tools run --rm validate -i /work/feed.zip -o /work/validation
-docker compose run --rm convert /data/feed.zip --validation-report /data/validation/report.json
-```
-
-`data/validation/report.html` is the human-readable report. Every `ERROR` notice stops
-the conversion; warnings are only logged. Some errors do not matter for this tool: let
-them through with `--ignore-validation CODE [CODE...]`, using the code shown in the
-report. A feed that is valid is not necessarily convertible well: for example a feed
-without `shapes.txt` is valid but its routes get no ways. The validator also reports
-calendars that have expired.
-
-For very large feeds, give Java more memory, for instance with
-`-e JAVA_TOOL_OPTIONS=-Xmx4g` (`docker run`) or an `environment:` entry in
-`docker-compose.yml`.
+- Some errors do not matter for this tool: let them through with
+  `--ignore-validation CODE [CODE...]`, using the code shown in the report.
+- `--no-validate` skips the check; `--validation-report report.json` uses a report you
+  already have instead of running the validator.
+- Without Java (the lite image, or a native install) the feed is simply not checked.
+  Outside Docker, `$GTFS_VALIDATOR_JAR` can point to the validator's `cli.jar`.
+- A feed that is valid is not necessarily convertible well: for example a feed without
+  `shapes.txt` is valid but its routes get no ways. The validator also reports calendars
+  that have expired.
+- For very large feeds Java may need more memory: set `JAVA_TOOL_OPTIONS=-Xmx4g` in the
+  `environment:` of the service in `docker-compose.yml`.
 
 ## Prerequisites
 
@@ -243,7 +243,8 @@ tune what is guessed (all of them are in [docs/usage.md](docs/usage.md)):
 | `--refresh` | Download the OSM data again |
 | `--online` | Ask Overpass and Valhalla instead (small networks only) |
 | `--stop-search-radius M` | Distance to match a GTFS stop with an OSM stop (default 10; at most 100, or 10 with `--online`) |
-| `--validation-report report.json`, `--ignore-validation CODE...` | Use the GTFS validator's report |
+| `--no-validate` | Do not check the feed with the GTFS validator |
+| `--validation-report report.json`, `--ignore-validation CODE...` | Use this validator report instead of running it; let some error codes through |
 | `-v`, `--verbose` | Detailed log |
 
 The stop search radius is the one to adjust by trial: GTFS positions are often 10 to 30 m
@@ -306,19 +307,22 @@ Before importing a feed, make sure that:
 
 ## Development
 
-Everything runs in Docker. The `dev` profile mounts the `gtfstoosm/` and `tests/` folders
-of your disk in the container, so a change is seen at once, with no rebuild:
+Everything runs in Docker. `Dockerfile.dev` builds an image without the source: compose
+mounts the `gtfstoosm/` and `tests/` folders of your disk in it, so a change is seen at
+once, with no rebuild. `up` starts it, and the tests run again at each change:
 
 ```bash
-docker compose --profile dev run --rm convert-dev /data/feed.zip   # the tool, from the code on your disk
-docker compose --profile dev run --rm test                         # the tests, once
-docker compose --profile dev run --rm watch                        # the tests, again at each change
-docker compose --profile dev run --rm lint                         # ruff
+docker compose --profile dev up                       # the tests, again at each change
+docker compose exec dev gtfstoosm /data/feed.zip      # in another terminal: the tool, from your code
+docker compose exec dev pytest                        # the tests, once
+docker compose exec dev ruff check .                  # lint
 ```
 
-The first command builds the `dev` image (`docker compose --profile dev build --pull test`
-to bring it up to date). The `convert` service used in the Quick start has the code
-inside its image: after a change, rebuild it with `docker compose build --pull convert`.
+(Without `up -d`, the same work in a one-shot container:
+`docker compose --profile dev run --rm dev pytest`.) To bring the image up to date,
+`docker compose --profile dev build --pull dev`. The images used for running the tool
+(`Dockerfile`: `convert` and `convert-lite`) have the code inside: after a change,
+rebuild with `docker compose build --pull convert`.
 
 Without Docker, with [uv](https://docs.astral.sh/uv/):
 
@@ -327,15 +331,16 @@ uv run --python 3.12 --with pytest python -m pytest -m "not slow"
 ```
 
 Tests marked `slow` call the online services and are skipped here; the others never use
-the network. `nox` runs the tests on several Python versions (`nox -s tests`), and has
-`lint` and `type_check` sessions.
+the network, nor run the validator. `nox` runs the tests on several Python versions
+(`nox -s tests`), and has `lint` and `type_check` sessions.
 
 ```
 gtfstoosm/
 ├── gtfstoosm/       # package: cli.py, convert.py, extracts.py, osm_data.py, ...
 ├── tests/
 ├── docs/usage.md    # all the options, and the Python API
-├── Dockerfile
+├── Dockerfile       # the tool: lite and full (with the validator) images
+├── Dockerfile.dev   # for working on the code
 ├── docker-compose.yml
 └── pyproject.toml
 ```

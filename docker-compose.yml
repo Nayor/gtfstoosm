@@ -1,81 +1,58 @@
 # Everything runs in containers, nothing needs to be installed on the host.
 #
 # Using the tool (the code is inside the image: rebuild with `docker compose build --pull convert`
-# after updating it):
+# after updating it). `convert` checks every feed with the GTFS validator first; the
+# lighter `convert-lite` does not:
 #   docker compose run --rm convert /data/feed.zip
-#   docker compose --profile tools run --rm validate -i /work/feed.zip -o /work/validation
+#   docker compose --profile lite run --rm convert-lite /data/feed.zip
 #   docker compose --profile tools run --rm osmium extract ...    # OSM extracts (osmium-tool)
 #   docker compose --profile tools run --rm pfaedle -x /data/region.osm.pbf /data/feed.zip
 #
-# Working on the code (the `dev` profile): the folders gtfstoosm/ and tests/ of the host are
-# mounted in the container, so a change is seen at once, with no rebuild:
-#   docker compose --profile dev run --rm convert-dev /data/feed.zip
-#   docker compose --profile dev run --rm test               # the tests, once
-#   docker compose --profile dev run --rm watch              # the tests, again at each change
-#   docker compose --profile dev run --rm lint
+# Working on the code (profile dev, Dockerfile.dev): the folders gtfstoosm/ and tests/ of the
+# host are mounted in the container, so a change is seen at once, with no rebuild.
+# `up` starts it and the tests run again at each change; the other commands go in it:
+#   docker compose --profile dev up
+#   docker compose exec dev gtfstoosm /data/feed.zip
+#   docker compose exec dev pytest
+#   docker compose exec dev ruff check .
+# (without `up`, the same work in a one-shot container: docker compose --profile dev run --rm dev pytest)
 #
 # Put GTFS feeds and OSM extracts in ./data (git-ignored); downloads are cached in ./data/cache.
-
-x-dev: &dev
-  build:
-    context: .
-    target: dev
-  image: gtfstoosm:dev
-  volumes:
-    - ./gtfstoosm:/app/gtfstoosm
-    - ./tests:/app/tests
-    - ./data:/data
-  profiles: ["dev"]
 
 services:
   convert:
     build:
       context: .
-      target: runtime
+      target: full
     image: gtfstoosm:latest
     volumes:
       - ./data:/data
 
-  # The same command-line tool, run from the code on the disk
-  convert-dev:
-    <<: *dev
-    entrypoint: ["python", "-m", "gtfstoosm.cli"]
-    command: ["--help"]
-
-  test:
-    <<: *dev
-
-  # Runs the tests again each time a file of gtfstoosm/ or tests/ changes. The files are
-  # polled, because changes made on the host do not always notify the container.
-  watch:
-    <<: *dev
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-    command:
-      - watchfiles
-      - --filter
-      - python
-      - pytest -q -m "not slow" -p no:cacheprovider
-      - /app/gtfstoosm
-      - /app/tests
-
-  lint:
-    <<: *dev
-    command: ["ruff", "check", "."]
-
-  # Official GTFS validator of MobilityData (Apache-2.0). It writes report.json, which
-  # can be given to convert with --validation-report.
-  validate:
-    image: ghcr.io/mobilitydata/gtfs-validator:8.0.1
+  convert-lite:
+    build:
+      context: .
+      target: lite
+    image: gtfstoosm:lite
     volumes:
-      - ./data:/work
-    profiles: ["tools"]
+      - ./data:/data
+    profiles: ["lite"]
+
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: gtfstoosm:dev
+    volumes:
+      - ./gtfstoosm:/app/gtfstoosm
+      - ./tests:/app/tests
+      - ./data:/data
+    profiles: ["dev"]
 
   osmium:
     build:
       context: .
-      target: runtime
-    image: gtfstoosm:latest
+      target: lite
+    image: gtfstoosm:lite
     entrypoint: ["osmium"]
     volumes:
       - ./data:/data

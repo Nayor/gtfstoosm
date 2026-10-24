@@ -1,8 +1,14 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
+#
+# The tool, for using it. Two images are built from this file:
+#   docker build --target full .   (the default) with the GTFS validator, which checks
+#                                  every feed before it is converted
+#   docker build --target lite .   without it: no Java, about 250 MB lighter
+# For working on the code see Dockerfile.dev.
 
 FROM python:3.12-slim AS base
 
-# osmium-tool: cut and filter OSM extracts (osmium extract / tags-filter)
+# osmium-tool: cuts the OSM data to the area of the feed
 RUN apt-get update \
     && apt-get install -y --no-install-recommends osmium-tool \
     && rm -rf /var/lib/apt/lists/*
@@ -25,14 +31,25 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY gtfstoosm ./gtfstoosm
 RUN uv sync --frozen --no-dev
 
-# Development image: tests, linting and a watcher. The source folders are bind-mounted
-# by compose over the copies below, so a change on the disk is seen without a rebuild
-FROM base AS dev
-RUN uv pip install --python /opt/venv/bin/python pytest ruff watchfiles
-COPY tests ./tests
-CMD ["pytest", "-m", "not slow"]
+COPY --chmod=755 docker/gtfstoosm /usr/local/bin/gtfstoosm
 
-# Default image: the converter CLI
-FROM base AS runtime
 ENTRYPOINT ["python", "-m", "gtfstoosm.cli"]
 CMD ["--help"]
+
+
+# Without the validator
+FROM base AS lite
+
+
+# With the validator (MobilityData, Apache-2.0): a Java program, run by the tool on
+# each feed. The jar is the release's, checked against its published checksum.
+FROM base AS full
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD --checksum=sha256:19293ddd9b6f954f216d4f12054bd8a3232921751c4484339e339764a91000e2 \
+    https://github.com/MobilityData/gtfs-validator/releases/download/v8.0.1/gtfs-validator-8.0.1-cli.jar \
+    /opt/gtfs-validator/gtfs-validator-cli.jar
+ENV GTFS_VALIDATOR_JAR=/opt/gtfs-validator/gtfs-validator-cli.jar

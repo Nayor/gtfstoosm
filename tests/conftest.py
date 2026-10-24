@@ -13,3 +13,9 @@ def no_network(monkeypatch):
 
     monkeypatch.setattr(requests, "get", refuse)
     monkeypatch.setattr(requests, "post", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_validator(monkeypatch):
+    """The Java validator is never run by the tests; a test that wants it stubs it."""
+    monkeypatch.setenv("GTFS_VALIDATOR_JAR", "/nonexistent/validator.jar")
