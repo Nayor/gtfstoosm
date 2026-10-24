@@ -76,8 +76,6 @@ Other commands:
 
 ```bash
 docker compose run --rm convert --help                  # all options
-docker compose --profile dev run --rm test              # tests (no internet needed)
-docker compose --profile dev run --rm lint              # ruff
 docker compose --profile tools run --rm osmium --help   # osmium-tool, to cut OSM extracts
 docker compose --profile tools run --rm pfaedle -x /data/region.osm.pbf /data/feed.zip
 ```
@@ -187,8 +185,24 @@ Before importing a feed, make sure that:
 
 ## Development
 
-Everything can run in Docker (`docker compose --profile dev run --rm test`), or
-natively with [uv](https://docs.astral.sh/uv/):
+Everything runs in Docker. `Dockerfile.dev` builds an image without the source: compose
+mounts the `gtfstoosm/` and `tests/` folders of your disk in it, so a change is seen at
+once, with no rebuild. `up` starts it, and the tests run again at each change:
+
+```bash
+docker compose --profile dev up                                          # the tests, again at each change
+docker compose exec dev gtfstoosm -i /data/feed.zip -o /data/out.osc     # in another terminal: the tool, from your code
+docker compose exec dev pytest                                           # the tests, once
+docker compose exec dev ruff check .                                     # lint
+```
+
+(Without `up -d`, the same work in a one-shot container:
+`docker compose --profile dev run --rm dev pytest`.) To bring the image up to date,
+`docker compose --profile dev build --pull dev`. The image used for running the tool
+(`Dockerfile`, service `convert`) has the code inside: after a change, rebuild it with
+`docker compose build --pull convert`.
+
+Without Docker, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv run --python 3.12 --with pytest python -m pytest -m "not slow"
@@ -202,7 +216,8 @@ gtfstoosm/
 ├── gtfstoosm/       # package: cli.py, convert.py, gtfs.py, osm.py, utils.py
 ├── tests/
 ├── docs/usage.md    # all the options, and the Python API
-├── Dockerfile
+├── Dockerfile       # the tool
+├── Dockerfile.dev   # for working on the code
 ├── docker-compose.yml
 └── pyproject.toml
 ```

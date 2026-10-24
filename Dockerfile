@@ -1,13 +1,15 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
+#
+# The tool, for using it. For working on the code see Dockerfile.dev.
 
-FROM python:3.12-slim AS base
+FROM python:3.12-slim
 
 # osmium-tool: cut and filter OSM extracts (osmium extract / tags-filter)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends osmium-tool \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /usr/local/bin/uv
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -24,13 +26,7 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY gtfstoosm ./gtfstoosm
 RUN uv sync --frozen --no-dev
 
-# Development image: tests and linting, source is bind-mounted by compose
-FROM base AS dev
-RUN uv pip install --python /opt/venv/bin/python pytest ruff
-COPY tests ./tests
-CMD ["pytest", "-m", "not slow"]
+COPY --chmod=755 docker/gtfstoosm /usr/local/bin/gtfstoosm
 
-# Default image: the converter CLI
-FROM base AS runtime
 ENTRYPOINT ["python", "-m", "gtfstoosm.cli"]
 CMD ["--help"]
