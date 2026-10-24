@@ -213,20 +213,24 @@ class TestGetOSMRouteType:
         assert builder._get_osm_route_type(4) == "ferry"
 
     def test_trolleybus_route_type(self):
-        """Test GTFS trolleybus (5 and 11) maps to OSM trolleybus."""
+        """Test GTFS trolleybus (11) maps to OSM trolleybus."""
         builder = OSMRelationBuilder()
-        assert builder._get_osm_route_type(5) == "trolleybus"
         assert builder._get_osm_route_type(11) == "trolleybus"
 
-    def test_cable_car_route_type(self):
-        """Test GTFS cable car (6) maps to OSM cable_car."""
+    def test_cable_tram_route_type(self):
+        """Test GTFS cable tram (5) maps to OSM tram."""
         builder = OSMRelationBuilder()
-        assert builder._get_osm_route_type(6) == "cable_car"
+        assert builder._get_osm_route_type(5) == "tram"
 
-    def test_gondola_route_type(self):
-        """Test GTFS gondola (7) maps to OSM gondola."""
+    def test_aerial_lift_route_type(self):
+        """Test GTFS aerial lift (6) maps to OSM aerialway."""
         builder = OSMRelationBuilder()
-        assert builder._get_osm_route_type(7) == "gondola"
+        assert builder._get_osm_route_type(6) == "aerialway"
+
+    def test_funicular_route_type(self):
+        """Test GTFS funicular (7) maps to OSM funicular."""
+        builder = OSMRelationBuilder()
+        assert builder._get_osm_route_type(7) == "funicular"
 
     def test_monorail_route_type(self):
         """Test GTFS monorail (12) maps to OSM monorail."""
@@ -236,7 +240,7 @@ class TestGetOSMRouteType:
     def test_unknown_route_type_defaults_to_bus(self):
         """Test unknown route type defaults to bus."""
         builder = OSMRelationBuilder()
-        assert builder._get_osm_route_type(999) == "bus"
+        assert builder._get_osm_route_type(1100) == "bus"
 
     def test_string_route_type(self):
         """Test route type as string."""

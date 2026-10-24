@@ -12,13 +12,21 @@ and every result has to be checked by a person before it goes into OpenStreetMap
 
 For each route of the feed, and for each distinct sequence of stops used by its trips:
 
-1. **Stops**: looks for an existing OSM bus stop (`highway=bus_stop` or
-   `public_transport=platform`) within a few metres of each GTFS stop. With
+1. **Routes**: keeps the routes of the modes asked for (all of them by default, see
+   below) and leaves out closed lines, i.e. routes without any service from today on.
+2. **Stops**: looks for an existing OSM stop of the right kind (bus stop, tram stop,
+   railway station, ferry terminal...) within a few metres of each GTFS stop. With
    `--add-missing-stops`, stops that are not found are added as new nodes.
-2. **Ways**: follows the trip's shape (`shapes.txt`) on the road network and lists the
-   OSM ways it uses.
-3. **Relations**: writes a `type=route` relation (stops as `platform` members, then
-   ways) per stop sequence, and a `type=route_master` relation grouping them.
+3. **Ways** (bus and trolleybus only): follows the trip's shape (`shapes.txt`) on the
+   road network and lists the OSM ways it uses. Other modes, and feeds without
+   `shapes.txt` (most Swiss feeds), get their stops only.
+4. **Relations**: writes a `type=route` relation (stops as `platform` members, then
+   ways if any) per stop sequence, and a `type=route_master` relation grouping them.
+
+Modes: `bus`, `trolleybus`, `tram`, `train`, `light_rail`, `subway`, `monorail`,
+`funicular`, `ferry` and `aerialway` (gondolas, cable cars). Both the basic GTFS route
+types and the extended ones (such as 100-117 for rail, 700 for buses, 900 for trams,
+1400 for funiculars) are understood. Air, taxi and miscellaneous services are left out.
 
 The result is an [osmChange](https://wiki.openstreetmap.org/wiki/OsmChange) file
 (`.osc`) whose new objects have negative IDs.
@@ -27,9 +35,11 @@ What it does **not** do:
 
 - It does not check whether the relations already exist in OSM: look before you add.
 - It does not upload anything.
-- It does not support feeds without `shapes.txt` yet (it stops with `KeyError: 'shapes'`).
-  [pfaedle](#quick-start-with-docker-any-os) can generate the shapes.
-- Bus routes are the supported case.
+- It does not draw the track of trams, trains and the like: only bus and trolleybus
+  routes get ways. Add them in JOSM, or generate shapes with
+  [pfaedle](#quick-start-with-docker-any-os).
+- Stops of modes other than buses are only matched and created with minimal tags
+  (`public_transport=platform`, plus `railway=platform` for rail modes): check them.
 
 ### Online services used
 
@@ -39,7 +49,7 @@ avoid repeated runs on large feeds. These addresses are written in `convert.py`.
 | What | Service | What is sent |
 |---|---|---|
 | Existing OSM stops | [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) instance `maps.mail.ru` | Coordinates of the stops |
-| Ways followed by a trip | [Valhalla](https://valhalla.github.io/valhalla/) instance `valhalla1.openstreetmap.de` | Points of the trip shape |
+| Ways followed by a bus trip | [Valhalla](https://valhalla.github.io/valhalla/) instance `valhalla1.openstreetmap.de` | Points of the trip shape |
 
 An internet connection is therefore required (except to run the tests).
 
@@ -143,6 +153,9 @@ The main options (all of them are in [docs/usage.md](docs/usage.md)):
 | `--add-missing-stops` | Add stops that are not in OSM as new nodes |
 | `--exclude-stops`, `--exclude-routes` | Leave the stops, or the routes, out of the output |
 | `--route-ref-pattern REGEX` | Only convert routes whose `route_id` matches |
+| `--modes MODE [MODE...]` | Only convert these modes (default: all supported modes) |
+| `--active-on YYYY-MM-DD` | Leave out routes without service from this day on (default: today) |
+| `--include-inactive` | Convert routes even if they no longer have service |
 | `--relation-tags 'k=v;k=v'` | Tags added to the route and route_master relations |
 | `--stop-search-radius M` | Distance in metres to match a GTFS stop to an OSM stop (10 at most) |
 | `--add-route-direction` | Add the compass direction to route names |
@@ -171,8 +184,9 @@ Before importing a feed, make sure that:
 
 ## Output
 
-- **Stops** (only with `--add-missing-stops`): `public_transport=platform`,
-  `highway=bus_stop`, `name`.
+- **Stops** (only with `--add-missing-stops`): `name` and `public_transport=platform`,
+  plus `highway=bus_stop` for buses and trolleybuses or `railway=platform` for rail
+  modes.
 - **Routes**: `type=route`, `public_transport:version=2`, `route` (from the GTFS
   `route_type`), `ref` (from `route_short_name`), `name`, `from` and `to` (first and last
   stop), and `colour` when the route has one.
@@ -182,7 +196,10 @@ Before importing a feed, make sure that:
 
 - *Conversion fails*: run with `-v`, and check the feed with a
   [GTFS validator](https://gtfs.org/resources/validation/).
-- *`KeyError: 'shapes'`*: the feed has no `shapes.txt`. Generate it with `pfaedle`.
+- *Routes without ways*: expected for feeds without `shapes.txt` and for modes other
+  than bus and trolleybus.
+- *A line is missing*: it may have no service from today on (`--include-inactive`), or
+  its type is not supported (see `-v`).
 - *"Request error by Overpass API (HTTP 504)"* or *429*: the public server is busy. The
   tool retries a few times; try again later, and use `--route-ref-pattern` to convert
   fewer routes at once.

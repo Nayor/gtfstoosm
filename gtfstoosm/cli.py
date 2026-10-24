@@ -8,9 +8,21 @@ import argparse
 import logging
 import os
 import sys
+from datetime import date
 
 from gtfstoosm.convert import convert_gtfs_to_osm
+from gtfstoosm.modes import SUPPORTED_MODES
 from gtfstoosm.utils import parse_tag_string
+
+
+def parse_cli_date(value: str) -> date:
+    """Parse a YYYY-MM-DD command-line date."""
+    try:
+        return date.fromisoformat(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a date, expected YYYY-MM-DD"
+        ) from err
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -142,6 +154,34 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--modes",
+        dest="modes",
+        nargs="+",
+        choices=SUPPORTED_MODES,
+        metavar="MODE",
+        help="Modes to convert, among: "
+        + ", ".join(SUPPORTED_MODES)
+        + " (default: all of them)",
+    )
+
+    parser.add_argument(
+        "--active-on",
+        dest="active_on",
+        type=parse_cli_date,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Leave out routes without service from this day on, i.e. closed lines (default: today)",
+    )
+
+    parser.add_argument(
+        "--include-inactive",
+        dest="include_inactive",
+        action="store_true",
+        default=False,
+        help="Convert routes even if they no longer have service",
+    )
+
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -205,6 +245,10 @@ def main(args: list[str] | None = None) -> int:
             "stop_search_radius": parsed_args.stop_search_radius,
             "add_route_direction": parsed_args.add_route_direction,
             "route_ref_pattern": parsed_args.route_ref_pattern,
+            "modes": parsed_args.modes,
+            "active_on": None
+            if parsed_args.include_inactive
+            else (parsed_args.active_on or date.today()),
             "feed_id": parsed_args.feed_id,
             "ptv2_names": parsed_args.ptv2_names,
             "relation_tags": parse_tag_string(parsed_args.relation_tags)

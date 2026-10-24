@@ -41,6 +41,14 @@ python -m gtfstoosm.cli --input /path/to/gtfs.zip --output output.osc
   - Decrease for more precise matching in dense areas
   - Any value above 10 meters will be ignored because it will take too long to search
 
+#### Modes and Closed Lines
+
+- `--modes MODE [MODE...]`: Modes to convert, among `bus`, `trolleybus`, `tram`, `train`, `light_rail`, `subway`, `monorail`, `funicular`, `ferry`, `aerialway` (default: all of them)
+  - Basic and extended GTFS route types are mapped to these modes; air, taxi and miscellaneous services are left out
+  - Only `bus` and `trolleybus` routes get ways (found with Valhalla from `shapes.txt`); the other modes are written with their stops only
+- `--active-on YYYY-MM-DD`: Leave out routes that have no service on that day or later, i.e. closed lines (default: today). Needs `calendar.txt` and/or `calendar_dates.txt`; without them nothing is filtered
+- `--include-inactive`: Convert routes even if they no longer have service
+
 #### Route Options
 
 - `--add-route-direction`: Add route direction information to the output (default: False)

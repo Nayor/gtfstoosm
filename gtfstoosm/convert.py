@@ -8,12 +8,21 @@ converting it to OSM relations that can be imported into OpenStreetMap.
 import logging
 import random
 import time
+from datetime import date
 
 import polars as pl
 import requests
 
 from gtfstoosm.gtfs import GTFSFeed
+from gtfstoosm.modes import (
+    ROAD_MODES,
+    SUPPORTED_MODES,
+    new_stop_tags,
+    osm_mode,
+    stop_selectors,
+)
 from gtfstoosm.osm import OSMElement, OSMNode, OSMRelation
+from gtfstoosm.services import active_service_ids
 from gtfstoosm.utils import (
     Trip,
     calculate_direction,
@@ -42,6 +51,8 @@ class OSMRelationBuilder:
         relation_tags: dict[str, str] | None = None,
         feed_id: str | None = None,
         ptv2_names: bool = False,
+        modes: list[str] | None = None,
+        active_on: date | None = None,
     ):
         """
         Initialize the OSM relation builder.
@@ -60,6 +71,8 @@ class OSMRelationBuilder:
         self.relation_tags: dict[str, str] | None = relation_tags
         self.feed_id: str | None = feed_id
         self.ptv2_names: bool = ptv2_names
+        self.modes: list[str] = list(modes) if modes else list(SUPPORTED_MODES)
+        self.active_on: date | None = active_on
         self._new_stop_node_ids: dict[str, int] = {}
 
     def __str__(self) -> str:
@@ -110,7 +123,7 @@ class OSMRelationBuilder:
             long_name = unique_route.get("route_long_name") or ""
             route_master_tags = {
                 "type": "route_master",
-                "route_master": "bus",
+                "route_master": osm_mode(unique_route["route_type"]) or "bus",
                 "ref": short_name,
                 "name": " ".join(
                     part for part in ("Route", short_name, long_name) if part
@@ -131,7 +144,10 @@ class OSMRelationBuilder:
                 tags=route_master_tags,
             )
             for route in self.relations:
-                if route.tags.get("ref") == unique_route["route_short_name"]:
+                if (
+                    route.tags.get("ref") == unique_route["route_short_name"]
+                    and route.tags.get("route") == route_master_tags["route_master"]
+                ):
                     master.add_member(osm_type="relation", ref=route.id)
             self.relations.append(master)
         logger.info(
@@ -150,13 +166,43 @@ class OSMRelationBuilder:
         trips = gtfs_data["trips"]
         stop_times = gtfs_data["stop_times"]
         stops = gtfs_data["stops"]
-        shapes = gtfs_data["shapes"]
+        shapes = gtfs_data.get("shapes")
+        if shapes is None:
+            logger.warning("No shapes.txt in the feed: routes are written without ways")
+        if "shape_id" not in trips.columns:
+            trips = trips.with_columns(pl.lit(None, dtype=pl.Utf8).alias("shape_id"))
 
         logger.info(f"Processing {routes.height} routes")
+
+        # Leave out services that no longer run (closed lines)
+        if self.active_on is not None:
+            active = active_service_ids(gtfs_data, self.active_on)
+            if active is None:
+                logger.warning(
+                    "No calendar.txt or calendar_dates.txt: cannot tell closed lines apart"
+                )
+            else:
+                all_routes = trips["route_id"].n_unique()
+                trips = trips.filter(pl.col("service_id").is_in(active))
+                logger.info(
+                    f"{all_routes - trips['route_id'].n_unique()} routes without "
+                    f"service from {self.active_on} left out"
+                )
 
         # Filter routes by type if specified
         if self.route_types:
             routes = routes.filter(pl.col("route_type").is_in(self.route_types))
+
+        # Keep the modes asked for, leave out those OSM does not map
+        routes = routes.with_columns(
+            pl.col("route_type")
+            .map_elements(osm_mode, return_dtype=pl.Utf8)
+            .alias("osm_mode")
+        )
+        unsupported = routes.filter(pl.col("osm_mode").is_null()).height
+        if unsupported:
+            logger.info(f"{unsupported} routes of an unsupported type left out")
+        routes = routes.filter(pl.col("osm_mode").is_in(self.modes))
 
         # Filter routes by regex pattern if specified
         if self.route_ref_pattern is not None:
@@ -193,6 +239,8 @@ class OSMRelationBuilder:
             except pl.exceptions.OutOfBoundsError:
                 continue
 
+            osm_route_type = route_info["osm_mode"]
+
             # Create Trip objects from the grouped data
             trip_sequences = [
                 Trip(
@@ -214,12 +262,20 @@ class OSMRelationBuilder:
                 stop_objects = []
                 if not self.exclude_stops:
                     stop_objects = self._get_stop_objects(
-                        stop_locations, self.add_missing_stops, self.search_radius
+                        stop_locations,
+                        self.add_missing_stops,
+                        self.search_radius,
+                        mode=osm_route_type,
                     )
 
                 # Get the OSM ways that make up the route
                 osm_way_ids = []
-                if not self.exclude_routes:
+                if (
+                    not self.exclude_routes
+                    and osm_route_type in ROAD_MODES
+                    and shapes is not None
+                    and trip_sequence.shape_id is not None
+                ):
                     osm_way_ids = self._get_route_ways(trip_sequence.shape_id, shapes)
 
                 # Calculate direction
@@ -232,7 +288,6 @@ class OSMRelationBuilder:
                 # Optional GTFS columns may be absent from routes.txt or empty
                 short_name = route_info.get("route_short_name") or ""
                 long_name = format_name(route_info.get("route_long_name"))
-                osm_route_type = self._get_osm_route_type(route_info["route_type"])
                 from_name, to_name = self._get_terminus_names(stop_locations)
                 if self.ptv2_names and from_name and to_name:
                     name = f"{osm_route_type} {short_name}: {from_name} => {to_name}"
@@ -292,7 +347,11 @@ class OSMRelationBuilder:
         return (names[0] or "").strip(), (names[-1] or "").strip()
 
     def _get_stop_objects(
-        self, stops: pl.DataFrame, add_missing_stops: bool, max_distance: float = 5
+        self,
+        stops: pl.DataFrame,
+        add_missing_stops: bool,
+        max_distance: float = 5,
+        mode: str = "bus",
     ) -> list[OSMElement]:
         """
         Get OSM elements for stops by querying nearby bus stops from OpenStreetMap.
@@ -317,11 +376,9 @@ class OSMRelationBuilder:
             for stop_row in stops.iter_rows(named=True)
         ]
 
+        selectors = stop_selectors(mode)
         query_body = "\n".join(
-            f"""
-        node["highway"="bus_stop"]{around};
-        node["public_transport"="platform"]{around};
-        """
+            "\n".join(f"        node{selector}{around};" for selector in selectors)
             for around in around_clauses
         )
 
@@ -402,8 +459,7 @@ class OSMRelationBuilder:
                                     lon=stop_lon,
                                     tags={
                                         "name": stop_row["name"],
-                                        "public_transport": "platform",
-                                        "highway": "bus_stop",
+                                        **new_stop_tags(mode),
                                     },
                                 )
                                 if not self.is_stop_duplicate(new_stop):
@@ -658,21 +714,7 @@ class OSMRelationBuilder:
         except (ValueError, TypeError):
             return "bus"  # Default to bus if conversion fails
 
-        # GTFS route types mapping to OSM route values
-        route_type_map = {
-            0: "tram",
-            1: "subway",
-            2: "train",
-            3: "bus",
-            4: "ferry",
-            5: "trolleybus",
-            6: "cable_car",
-            7: "gondola",
-            11: "trolleybus",
-            12: "monorail",
-        }
-
-        return route_type_map.get(route_type, "bus")
+        return osm_mode(route_type) or "bus"
 
     def _new_stop_node_id(self, stop_id: str) -> int:
         """Return the negative OSM node id used for a GTFS stop that is not in OSM.
@@ -750,6 +792,8 @@ def convert_gtfs_to_osm(
             - feed_id: Identifier of the feed; when set, route relations get gtfs:feed,
               gtfs:route_id and gtfs:trip_id:sample tags (default: None)
             - ptv2_names: Name routes "bus 1: A => B" instead of "Route 1 Long Name" (default: False)
+            - modes: OSM route values to convert, e.g. ["bus", "tram"] (default: all supported modes)
+            - active_on: datetime.date; routes without service from that day are left out (default: None, no filter)
 
     Returns:
         True if conversion was successful
@@ -785,6 +829,8 @@ def convert_gtfs_to_osm(
             relation_tags=options.get("relation_tags"),
             feed_id=options.get("feed_id"),
             ptv2_names=options.get("ptv2_names", False),
+            modes=options.get("modes"),
+            active_on=options.get("active_on"),
         )
 
         logger.debug(f"OSMRelationBuilder options: {builder}")

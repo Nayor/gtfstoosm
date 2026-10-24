@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class Trip(BaseModel):
     trip_id: str | int
     route_id: str | int
-    shape_id: str | int
+    shape_id: str | int | None = None
     stops: list[str | int]
 
 
