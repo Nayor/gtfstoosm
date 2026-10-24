@@ -100,6 +100,10 @@ convert_gtfs_to_osm(
 
 The other options are `exclude_stops`, `exclude_routes`, `route_ref_pattern`, `relation_tags` (a dict), `modes` (a list), `active_on` (a `datetime.date`), `osm_file` and `refresh`.
 
+## Routes and stops that OSM has already
+
+When the OSM data (extract) is used, the routes of the feed are compared with the route relations of OSM and the stops with its stops; see the README. A route that OSM has is not created again: if it only lacks tags (the link with the feed, `network`...) they are added with an `action="modify"` of the relation, if it differs (other tags values, other stops) it is reported in the log and left alone. The stops that OSM has get `gtfs:stop_id:<feed>`. In the library, `compare_existing=False` creates everything as before.
+
 ## Output Format
 
 The converter generates OSM XML containing (JOSM's format by default, osmChange with `--format osc`; the library writes osmChange unless `output_format` says otherwise):

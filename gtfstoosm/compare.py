@@ -146,21 +146,12 @@ def find_existing(
         return _best(linked, score)
 
     ref = built.tags.get("ref")
-    network = built.tags.get("network")
     close = []
     for e in pool:
         overlap = score(e)[0]
         if overlap < MIN_OVERLAP:
             continue
-        same_line = (
-            bool(ref)
-            and e.tags.get("ref") == ref
-            and (
-                not network
-                or not e.tags.get("network")
-                or e.tags.get("network") == network
-            )
-        )
+        same_line = bool(ref) and e.tags.get("ref") == ref
         if same_line or overlap >= SURE_OVERLAP:
             close.append(e)
     if not close:

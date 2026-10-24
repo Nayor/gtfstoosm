@@ -5,8 +5,8 @@ This module contains the main functionality for reading GTFS data and
 converting it to OSM relations that can be imported into OpenStreetMap.
 """
 
+import itertools
 import logging
-import random
 import time
 from datetime import date
 from pathlib import Path
@@ -14,6 +14,7 @@ from pathlib import Path
 import polars as pl
 import requests
 
+from gtfstoosm.compare import RouteMatch
 from gtfstoosm.extracts import prepare_extract
 from gtfstoosm.frequencies import (
     build_timetable,
@@ -31,6 +32,7 @@ from gtfstoosm.modes import (
 from gtfstoosm.osm import OSMElement, OSMNode, OSMRelation
 from gtfstoosm.osm_data import OsmExtract
 from gtfstoosm.services import active_service_ids
+from gtfstoosm.update import compare_with_osm
 from gtfstoosm.utils import (
     Trip,
     calculate_direction,
@@ -38,7 +40,6 @@ from gtfstoosm.utils import (
     format_colour,
     format_name,
     pattern_key,
-    string_to_unique_int,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class OSMRelationBuilder:
         osm_extract: OsmExtract | None = None,
         frequency_tags: bool = False,
         agency_tags: bool = False,
+        compare_existing: bool = True,
     ):
         """
         Initialize the OSM relation builder.
@@ -92,10 +94,27 @@ class OSMRelationBuilder:
         self.frequency_tags: bool = frequency_tags
         self.agency_tags: bool = agency_tags
         self._new_stop_node_ids: dict[str, int] = {}
+        self._relation_ids = itertools.count(-1, -1)  # new relations: -1, -2, ...
+        self.compare_existing: bool = compare_existing
+        self.matches: list[RouteMatch] = []  # routes compared with the relations of OSM
+        # what is changed in objects that are in OSM already (see update.py)
+        self.modifications: list[OSMElement] = []
+        self.stop_links: dict[int, set[str]] = {}  # OSM stop -> ids of the feed's stops
+        self.matched_nodes: dict[
+            int, OSMNode
+        ] = {}  # the OSM stops they were matched with
 
     def __str__(self) -> str:
         # Exclude None values and internal collections
-        exclude_attrs = {"relations", "nodes", "new_stops"}
+        exclude_attrs = {
+            "relations",
+            "nodes",
+            "new_stops",
+            "matches",
+            "modifications",
+            "stop_links",
+            "matched_nodes",
+        }
         attrs = [
             f"{k}={v!r}"
             for k, v in vars(self).items()
@@ -160,7 +179,7 @@ class OSMRelationBuilder:
                 route_master_tags.update(self.relation_tags)
 
             master = OSMRelation(
-                id=-1 * random.randint(1, 10**6),
+                id=next(self._relation_ids),
                 tags=route_master_tags,
             )
             for route in self.relations:
@@ -438,16 +457,19 @@ class OSMRelationBuilder:
 
                 # Create OSM relation
                 relation = OSMRelation(
-                    id=-1 * random.randint(1, string_to_unique_int(route_ref)),
+                    id=next(self._relation_ids),
                     tags=route_tags,
                     members=[],
                 )
 
                 # Add stop objects as members
                 for stop_object in stop_objects:
-                    relation.add_member(
-                        osm_type="node", ref=stop_object.id, role="platform"
+                    role = (
+                        "stop"
+                        if stop_object.tags.get("public_transport") == "stop_position"
+                        else "platform"
                     )
+                    relation.add_member(osm_type="node", ref=stop_object.id, role=role)
 
                 # Add ways as members
                 for way_id in osm_way_ids:
@@ -660,7 +682,10 @@ class OSMRelationBuilder:
         osm_elements: list[OSMElement] = []
         for row_index, stop_row in enumerate(rows):
             if row_index in matched:
-                osm_elements.append(matched[row_index])
+                node = matched[row_index]
+                osm_elements.append(node)
+                self.matched_nodes[node.id] = node
+                self.stop_links.setdefault(node.id, set()).add(str(stop_row["stop_id"]))
                 continue
 
             logger.debug(
@@ -951,7 +976,13 @@ class OSMRelationBuilder:
                 for relation in self.relations:
                     f.write(relation.to_xml() + "\n")
 
-                f.write("</create>\n</osmChange>\n")
+                f.write("</create>\n")
+                if self.modifications:
+                    f.write("<modify>\n")
+                    for element in self.modifications:
+                        f.write(element.to_josm_xml())
+                    f.write("</modify>\n")
+                f.write("</osmChange>\n")
 
             logger.info(f"Successfully wrote OSM data to {output_path}")
 
@@ -978,6 +1009,8 @@ class OSMRelationBuilder:
                     f.write(node.to_josm_xml())
                 for relation in self.relations:
                     f.write(relation.to_josm_xml())
+                for element in self.modifications:
+                    f.write(element.to_josm_xml("modify"))
                 f.write("</osm>\n")
             logger.info(f"Successfully wrote JOSM data to {output_path}")
         except Exception as e:
@@ -1104,6 +1137,7 @@ def convert_gtfs_to_osm(
 
         builder.build_relations(loader.tables)
         builder.build_route_masters(loader.tables)
+        compare_with_osm(builder)
 
         # Write to file(s): osmChange by default, JOSM's own format, or both
         output_format = options.get("output_format", "osc")

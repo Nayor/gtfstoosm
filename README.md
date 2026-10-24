@@ -119,6 +119,33 @@ are written in `convert.py`.
 | Existing OSM stops | Overpass instance `maps.mail.ru` | Coordinates of the stops |
 | Ways followed by a bus trip | Valhalla instance `valhalla1.openstreetmap.de` | Points of the trip shape |
 
+## Routes and stops that OSM has already
+
+The tool reads the route relations and the stops of the OSM data it uses, and compares
+them with what the feed gives, so that nothing is created twice. A route of the feed is
+matched with a relation of OSM through the link `gtfs:feed` + `gtfs:route_id` when
+it is there (a first import writes it), else through the `ref` and the stops they have
+in common (at least half of them, or 80 % whatever the `ref`). The two directions of a
+line are told apart by their ends and by the order of the stops. Each route gets one of
+these statuses:
+
+| Status | Meaning | In the file |
+|---|---|---|
+| new | nothing in OSM looks like it | the relation is created |
+| same | OSM has it, with all the tags the feed gives | nothing |
+| link | OSM has it and only lacks tags (the link with the feed, `network`, `duration`...) | a `modify` that adds them |
+| different | a tag has another value, or the stops are not the same (other stops, another order, a stop of the feed that has no node in OSM) | nothing: it is reported in the log |
+| ambiguous | several relations of OSM look equally like it | nothing: it is reported in the log |
+
+The tool **only adds**. It never removes a tag, changes the value of one, moves a node
+or changes the members of a relation of OSM: those differences are for the person who
+reviews the file. What it adds to objects that are in OSM (written as `action="modify"`
+with their current `version`): the missing tags of a route that is linked, the tag
+`gtfs:stop_id:<feed>` on the stops of OSM that the stops of the feed were matched with,
+and the new routes in the `route_master` of OSM when there is one. The routes of the
+feed that OSM lacks are created. The roles of the stops follow what OSM has: `stop` for
+a `public_transport=stop_position`, `platform` otherwise.
+
 ## Quick start with Docker (any OS)
 
 Docker is the easiest way to run the tool: nothing else to install, the same result
