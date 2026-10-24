@@ -194,3 +194,69 @@ class TestFeedInfo:
             {"feed_start_date": [""], "feed_end_date": ["x"]}
         )
         assert service_periods(tables) == {"summer": None}
+
+
+class TestSeasonalLinesOutOfSeason:
+    """A summer line is still a line in October: it comes back next summer."""
+
+    @pytest.fixture
+    def feed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            OSMRelationBuilder, "_get_stop_objects", lambda self, *a, **k: []
+        )
+        calendar_rows = [
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,"
+            "start_date,end_date",
+            "YEAR,1,1,1,1,1,1,1,20260101,20261231",
+            "SUM,1,1,1,1,1,1,1,20260704,20260823",
+            "OLDSUM,1,1,1,1,1,1,1,20240704,20240823",
+            "OLDYEAR,1,1,1,1,1,1,1,20240101,20241231",
+        ]
+        trips = ["route_id,service_id,trip_id"]
+        times = ["trip_id,arrival_time,departure_time,stop_id,stop_sequence"]
+        for route, service in (
+            ("Y", "YEAR"),
+            ("S", "SUM"),
+            ("O", "OLDSUM"),
+            ("A", "OLDYEAR"),
+        ):
+            trips.append(f"{route},{service},T{route}")
+            times += [
+                f"T{route},08:00:00,08:00:00,S1,1",
+                f"T{route},08:10:00,08:10:00,S2,2",
+            ]
+        files = {
+            "agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n"
+            "A,Agence,https://example.org,Europe/Paris\n",
+            "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\nS1,Gare,44.5,6.2\nS2,Plage,44.6,6.3\n",
+            "routes.txt": "route_id,route_short_name,route_type\nY,1,3\nS,2,3\nO,3,3\nA,4,3\n",
+            "calendar.txt": "\n".join(calendar_rows) + "\n",
+            "trips.txt": "\n".join(trips) + "\n",
+            "stop_times.txt": "\n".join(times) + "\n",
+        }
+        path = tmp_path / "feed.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            for name, content in files.items():
+                zf.writestr(name, content)
+        loaded = GTFSFeed(feed_dir=str(path))
+        loaded.load()
+        return loaded.tables
+
+    def refs(self, feed, today):
+        builder = OSMRelationBuilder(active_on=today)
+        builder.build_relations(feed)
+        return {r.tags["ref"] for r in builder.relations if r.tags["type"] == "route"}
+
+    def test_last_summers_line_is_kept_in_october(self, feed):
+        # YEAR runs; SUM ended in August and will return; the 2024 services are old
+        assert self.refs(feed, date(2026, 10, 24)) == {"1", "2"}
+
+    def test_it_is_dropped_after_a_year_without_season(self, feed):
+        # SUM ended on 2026-08-23: 374 days before
+        assert "2" not in self.refs(feed, date(2027, 9, 1))
+        assert "2" in self.refs(feed, date(2027, 8, 1))
+
+    def test_nothing_is_dropped_when_inactive_lines_are_wanted(self, feed):
+        builder = OSMRelationBuilder()
+        builder.build_relations(feed)
+        assert len(builder.relations) == 4

@@ -13,7 +13,12 @@ from datetime import date
 import polars as pl
 import requests
 
-from gtfstoosm.frequencies import build_timetable, pattern_service_tags
+from gtfstoosm.extracts import prepare_extract
+from gtfstoosm.frequencies import (
+    build_timetable,
+    pattern_service_tags,
+    service_periods,
+)
 from gtfstoosm.gtfs import GTFSFeed
 from gtfstoosm.modes import (
     ROAD_MODES,
@@ -23,20 +28,22 @@ from gtfstoosm.modes import (
     stop_selectors,
 )
 from gtfstoosm.osm import OSMElement, OSMNode, OSMRelation
-from gtfstoosm.extracts import prepare_extract
 from gtfstoosm.osm_data import OsmExtract
 from gtfstoosm.services import active_service_ids
 from gtfstoosm.utils import (
-    pattern_key,
     Trip,
     calculate_direction,
     deduplicate_trips,
     format_colour,
     format_name,
+    pattern_key,
     string_to_unique_int,
 )
 
 logger = logging.getLogger(__name__)
+
+# A seasonal service that ended less than this many days ago is not a closed line
+SEASON_RETURN_DAYS = 365
 
 
 class OSMRelationBuilder:
@@ -195,11 +202,24 @@ class OSMRelationBuilder:
                     "No calendar.txt or calendar_dates.txt: cannot tell closed lines apart"
                 )
             else:
+                # A seasonal service whose season ended less than a year ago is
+                # expected to come back: it is not a closed line
+                returning = {
+                    service_id
+                    for service_id, period in service_periods(gtfs_data).items()
+                    if period
+                    and (self.active_on - period[1]).days <= SEASON_RETURN_DAYS
+                }
                 all_routes = trips["route_id"].n_unique()
-                trips = trips.filter(pl.col("service_id").is_in(active))
+                trips = trips.filter(pl.col("service_id").is_in(active | returning))
                 logger.info(
                     f"{all_routes - trips['route_id'].n_unique()} routes without "
                     f"service from {self.active_on} left out"
+                    + (
+                        f", {len(returning - active)} seasonal services kept"
+                        if returning - active
+                        else ""
+                    )
                 )
 
         # Filter routes by type if specified

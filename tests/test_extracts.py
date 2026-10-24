@@ -18,6 +18,7 @@ from gtfstoosm.extracts import (
     regions_for_points,
 )
 from gtfstoosm.osm_data import OsmExtract
+from gtfstoosm.sources import Source
 from tests.test_offline import LAT, build_osm, lon
 
 
@@ -231,26 +232,28 @@ class TestCut:
         assert not cut([tmp_path / "x"], BBOX, tmp_path / "out.pbf")
 
 
+class FakeProvider:
+    """A provider that always finds the same source (or none)."""
+
+    def __init__(self, source):
+        self.source = source
+
+    def find(self, lat, lon):
+        return self.source
+
+
+TOWN = Source("fake", "town", "town", "https://example.org/town.pbf", 1.0)
+
+
 class TestPrepareExtract:
     @pytest.fixture
-    def prepared(self, tmp_path, monkeypatch, index_file):
-        """prepare_extract with downloads served from local files."""
+    def asked(self, tmp_path, monkeypatch):
+        """prepare_extract with the downloads served from a local file."""
         town = build_osm(tmp_path / "town.osm")
-        # a region covering the town, in the index
-        index = json.loads(index_file.read_text(encoding="utf8"))
-        index["features"].append(
-            feature(
-                "town", "https://example.org/town.pbf", square(7.9, 46.9, 8.1, 47.1)
-            )
-        )
-        index_file.write_text(json.dumps(index), encoding="utf8")
-
         asked = []
 
         def fake_download(url, dest, max_age_days=7, refresh=False):
             asked.append((url, refresh))
-            if url == extracts.GEOFABRIK_INDEX:
-                return index_file
             dest.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(
                 ["osmium", "cat", "--overwrite", "-o", str(dest), str(town)],
@@ -266,28 +269,51 @@ class TestPrepareExtract:
         monkeypatch.setattr(extracts, "download", fake_download)
         return asked
 
-    def test_downloads_cuts_and_caches(self, tmp_path, prepared):
-        cache = tmp_path / "cache"
-        points = [(LAT, lon(1)), (LAT, lon(9))]
+    def prepare(self, tmp_path, source=TOWN, **kwargs):
+        return prepare_extract(
+            [(LAT, lon(1)), (LAT, lon(9))],
+            BBOX,
+            cache=tmp_path / "cache",
+            providers=[FakeProvider(source)],
+            **kwargs,
+        )
 
-        [path] = prepare_extract(points, BBOX, cache=cache)
-        assert path.startswith(str(cache / "extracts"))
+    def test_downloads_cuts_and_caches(self, tmp_path, asked):
+        [path] = self.prepare(tmp_path)
+        assert path.startswith(str(tmp_path / "cache" / "extracts"))
         assert OsmExtract(path).stops_near([(LAT, lon(1))], 10, "bus")
 
         mtime = os.path.getmtime(path)
-        [again] = prepare_extract(points, BBOX, cache=cache)
+        [again] = self.prepare(tmp_path)
         assert again == path
         assert os.path.getmtime(path) == mtime  # not cut a second time
 
-    def test_refresh_is_passed_on(self, tmp_path, prepared):
-        prepare_extract([(LAT, lon(1))], BBOX, refresh=True, cache=tmp_path / "c")
-        assert all(refresh for _, refresh in prepared)
+    def test_refresh_is_passed_on(self, tmp_path, asked):
+        self.prepare(tmp_path, refresh=True)
+        assert asked == [("https://example.org/town.pbf", True)]
 
-    def test_the_whole_region_without_osmium(self, tmp_path, prepared, monkeypatch):
+    def test_the_whole_region_without_osmium(self, tmp_path, asked, monkeypatch):
         monkeypatch.setattr(extracts.shutil, "which", lambda name: None)
-        [path] = prepare_extract([(LAT, lon(1))], BBOX, cache=tmp_path / "c")
+        [path] = self.prepare(tmp_path)
         assert "regions" in path
 
-    def test_no_region_for_the_feed(self, tmp_path, prepared):
+    def test_no_region_for_the_feed(self, tmp_path, asked):
         with pytest.raises(RuntimeError, match="--osm-file"):
-            prepare_extract([(-60.0, -120.0)], BBOX, cache=tmp_path / "c")
+            self.prepare(tmp_path, source=None)
+
+    def test_a_file_put_in_the_cache_by_hand_is_used(self, tmp_path, asked):
+        forbidden = Source(
+            "osmfr", "fr_town", "fr/town", "https://x.org/t.pbf", 0.5, False
+        )
+        by_hand = tmp_path / "cache" / "regions" / "osmfr-fr_town.osm.pbf"
+        by_hand.parent.mkdir(parents=True)
+        subprocess.run(
+            ["osmium", "cat", "-o", str(by_hand), str(build_osm(tmp_path / "t.osm"))],
+            check=True,
+            capture_output=True,
+        )
+
+        [path] = self.prepare(tmp_path, source=forbidden)
+
+        assert asked == []  # nothing downloaded
+        assert OsmExtract(path).stops_near([(LAT, lon(1))], 10, "bus")

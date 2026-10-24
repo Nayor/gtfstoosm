@@ -42,7 +42,7 @@ services:
   # Official GTFS validator of MobilityData (Apache-2.0). It writes report.json, which
   # can be given to convert with --validation-report.
   validate:
-    image: ghcr.io/mobilitydata/gtfs-validator:latest
+    image: ghcr.io/mobilitydata/gtfs-validator:8.0.1
     volumes:
       - ./data:/work
     profiles: ["tools"]

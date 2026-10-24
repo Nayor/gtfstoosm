@@ -1,15 +1,14 @@
 """Find, download and cut the OpenStreetMap data around a feed.
 
-The region files come from Geofabrik. They are big, so they are kept in a cache
-directory and downloaded as little as possible:
+The region files come from OSM France and Geofabrik (see sources.py). They are big, so
+they are kept in a cache directory and downloaded as little as possible:
 
 - a file less than MAX_AGE_DAYS old is used without asking the server anything;
 - an older one is checked with a conditional request (If-None-Match and
   If-Modified-Since), which costs nothing when the file has not changed;
 - `refresh=True` downloads it again whatever its age.
 
-The smallest region(s) that contain the stops of the feed are chosen with Geofabrik's
-index of regions, then cut to the area of the feed with osmium-tool, and the result
+The smallest region(s) that contain the stops of the feed are chosen, then cut to the area of the feed with osmium-tool, and the result
 is cached too.
 """
 
@@ -278,6 +277,7 @@ def prepare_extract(
     bbox: tuple[float, float, float, float],
     refresh: bool = False,
     cache: Path | None = None,
+    providers: list | None = None,
 ) -> list[str]:
     """OSM file(s) covering the stops of a feed, ready to be read.
 
@@ -289,38 +289,46 @@ def prepare_extract(
         bbox: (min_lat, min_lon, max_lat, max_lon) of the area to keep
         refresh: download the files again even if the cache is recent
         cache: cache directory (default: see cache_dir)
+        providers: where to look for regions (default: OSM France, then Geofabrik)
     """
+    from gtfstoosm.sources import choose_sources, manual_path
+
     cache = cache or cache_dir()
-    index_path = download(
-        GEOFABRIK_INDEX, cache / "geofabrik-index.json", INDEX_MAX_AGE_DAYS, refresh
-    )
-    regions = regions_for_points(read_regions(index_path), points)
-    if not regions:
+    chosen = choose_sources(points, cache, refresh, providers)
+    if not chosen:
         raise RuntimeError(
             "No OSM region found for this feed. Give an extract with --osm-file"
         )
-    logger.info("OSM regions: " + ", ".join(region.id for region in regions))
+    logger.info("OSM regions: " + ", ".join(f"{s.name} ({s.provider})" for s in chosen))
 
-    sources = [
-        download(
-            region.url,
-            cache / "regions" / f"{region.id}.osm.pbf",
-            MAX_AGE_DAYS,
-            refresh,
+    sources = []
+    for source in chosen:
+        manual = None if source.allowed else manual_path(cache, source)
+        sources.append(
+            manual
+            or download(
+                source.url,
+                cache / "regions" / f"{source.key}.osm.pbf",
+                MAX_AGE_DAYS,
+                refresh,
+            )
         )
-        for region in regions
-    ]
 
-    stamps = [
-        str(
-            _read_metadata(source).get("last_modified")
-            or _read_metadata(source).get("etag")
+    def stamp(path: Path) -> str:
+        metadata = _read_metadata(path)
+        return str(
+            metadata.get("last_modified")
+            or metadata.get("etag")
+            or path.stat().st_mtime
         )
-        for source in sources
-    ]
+
     key = hashlib.sha1(
         json.dumps(
-            [[r.id for r in regions], stamps, [round(v, 3) for v in bbox]]
+            [
+                [s.key for s in chosen],
+                [stamp(path) for path in sources],
+                [round(v, 3) for v in bbox],
+            ]
         ).encode()
     ).hexdigest()[:16]
     dest = cache / "extracts" / f"{key}.osm.pbf"

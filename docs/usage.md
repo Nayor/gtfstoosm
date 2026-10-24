@@ -24,7 +24,7 @@ This writes `/path/to/gtfs.osc`. The OSM data around the stops of the feed is do
   - Basic and extended GTFS route types are mapped to these modes; air, taxi and miscellaneous services are left out
 - `--route-ref-pattern REGEX`: only the routes whose `route_id` matches. Most GTFS feeds use the route's reference as `route_id`, but some use a number
   - `"^[0-9]+$"`: numeric route IDs; `"^C"`: routes starting with C; `"^(10|20|30)$"`: routes 10, 20 or 30
-- `--include-inactive`: also convert routes that no longer have service. By default a route is left out when none of its services runs today or later (this needs `calendar.txt` and/or `calendar_dates.txt`; without them nothing is filtered)
+- `--include-inactive`: also convert routes that no longer have service. By default a route is left out when none of its services runs today or later, except seasonal lines whose season ended less than a year ago (they come back) (this needs `calendar.txt` and/or `calendar_dates.txt`; without them nothing is filtered)
 - `--no-new-stops`: do not create the stops that are missing from OSM
 - `--no-service-tags`: do not estimate `duration`, `interval`, `opening_hours` and `interval:conditional`
 
@@ -39,7 +39,7 @@ Routes whose trips have no `stop_times` are converted from their shape, with way
 ### OpenStreetMap data
 
 - `--osm-file FILE`: read existing stops and the ways followed by the shapes from this OSM extract (anything osmium reads: `.osm.pbf`, `.osm`...) instead of downloading one. Cut it to the area of the feed first (see the README)
-- `--refresh`: download the OSM data again even if the cache is recent. The cache is `$GTFSTOOSM_CACHE`, `data/cache` with Docker, `~/.cache/gtfstoosm` otherwise; files less than 7 days old are used as they are, older ones are checked with a conditional request
+- `--refresh`: download the OSM data again even if the cache is recent. The regions come from OSM France, then Geofabrik, as the README explains; the `robots.txt` of the sites is followed. The cache is `$GTFSTOOSM_CACHE`, `data/cache` with Docker, `~/.cache/gtfstoosm` otherwise; files less than 7 days old are used as they are, older ones are checked with a conditional request
 - `--online`: ask the public Overpass and Valhalla servers instead (small networks only; only bus and trolleybus routes get ways)
 - `--stop-search-radius METRES`: distance within which a GTFS stop is matched with an existing OSM stop (default: 10). GTFS positions are often 10 to 30 m off, so this one is worth adjusting. At most 100, and 10 with `--online` because Overpass has to look around every stop. The closest pairs are matched first
 

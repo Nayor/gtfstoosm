@@ -18,7 +18,8 @@ every result has to be checked by a person before it goes into OpenStreetMap.
 ## What it does
 
 1. **Routes**: keeps the routes of the supported modes and leaves out closed lines, i.e.
-   routes without any service from today on. Modes: `bus`, `trolleybus`, `tram`,
+   routes without any service from today on. A seasonal line (a summer shuttle in a feed
+   valid for a year) whose season ended less than a year ago is kept: it comes back. Modes: `bus`, `trolleybus`, `tram`,
    `train`, `light_rail`, `subway`, `monorail`, `funicular`, `ferry` and `aerialway`
    (gondolas, cable cars). The basic and the extended GTFS route types are understood.
    Air, taxi and miscellaneous services are left out.
@@ -53,14 +54,20 @@ What it does **not** do:
 
 ## The OpenStreetMap data
 
-By default the tool downloads what it needs from [Geofabrik](https://download.geofabrik.de/)
-and keeps it in a cache, so that the servers are asked as little as possible:
+By default the tool gets what it needs from the extracts that two sites publish, and
+keeps it in a cache, so that the servers are asked as little as possible:
 
-1. it looks at where the stops of the feed are and picks the smallest region(s) of
-   Geofabrik that contain them (a département of France rather than the country, for
-   instance);
-2. the region file is downloaded the first time. These files are big (a French region
-   or Switzerland: several hundred MB), so the first run takes a while;
+1. it looks at where the stops of the feed are and picks the smallest region that
+   contains them:
+   - [OSM France](https://download.openstreetmap.fr/) (`osmfr`) first: the world by
+     continents and countries, and for many countries their regions: the départements
+     and régions of France, the cantons of Switzerland, the Länder of Germany, the
+     provinces of Italy, Spain, Canada (down to cities such as Montréal)... Small files:
+     Hautes-Alpes is 45 MB, the region around it 391 MB;
+   - [Geofabrik](https://download.geofabrik.de/) (`geofabrik`) when OSM France has
+     nothing smaller: countries and some regions of the whole world;
+2. the region file is downloaded the first time. The big ones (several hundred MB) take
+   a while: the first run is long;
 3. a file less than 7 days old is used without asking the server anything; an older
    one is checked with a conditional request, which costs nothing if it has not
    changed; `--refresh` downloads it again whatever its age;
@@ -70,6 +77,21 @@ and keeps it in a cache, so that the servers are asked as little as possible:
 Where the cache is: the `data/cache` folder with Docker, `~/.cache/gtfstoosm` otherwise
 (or `$GTFSTOOSM_CACHE`). Geofabrik's extracts keep the version and the date of every
 object (not the name of the contributors), which is what a later update needs.
+
+**robots.txt.** The tool follows the `robots.txt` of the sites it downloads from.
+OSM France's says `Disallow: /*.pbf$`, i.e. robots must not fetch its `.pbf` files, so
+the tool does not download them by itself (it still reads the lists of regions and
+their outlines, which are allowed). When a smaller file exists there, the log gives its
+address and the name to save it under in the cache:
+
+```
+A smaller file exists for this area: https://download.openstreetmap.fr/extracts/europe/france/provence_alpes_cote_d_azur/hautes_alpes.osm.pbf (osmfr, ...)
+... download it yourself and save it as data/cache/regions/osmfr-europe_france_provence_alpes_cote_d_azur_hautes_alpes.osm.pbf, or give it with --osm-file
+```
+
+Save the file as asked (from your browser, for instance) and the next run uses it;
+until then the Geofabrik region is downloaded. If OSM France changes its robots.txt,
+its files are downloaded automatically.
 
 To use your own file (another source, no internet, a bigger area): `--osm-file`. Cut it
 to the area of the feed first, otherwise reading it takes a lot of memory:
@@ -278,13 +300,15 @@ Before importing a feed, make sure that:
   trip, or neither `stop_times` nor a shape, or its type is not supported (see `-v`).
 - *"No OSM region found for this feed"*: the stops are outside every Geofabrik region
   (check their coordinates) — or give your own file with `--osm-file`.
-- *The download is long*: the first run downloads the region (hundreds of MB); the
-  following ones use the cache.
+- *The download is long*: the first run downloads the region (hundreds of MB; Geofabrik
+  sometimes serves slowly, a few tens of KB/s); the following ones use the cache. For
+  a quicker start, take the smaller OSM France file the log tells about, or your own.
 
 ## Development
 
 Everything can run in Docker (`docker compose --profile dev run --rm test`; the `convert`
-image has to be rebuilt after a change, with `docker compose build convert`), or
+image has to be rebuilt after a change, with `docker compose build --pull convert`,
+which also fetches the latest base images), or
 natively with [uv](https://docs.astral.sh/uv/):
 
 ```bash
