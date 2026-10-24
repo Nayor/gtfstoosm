@@ -63,6 +63,7 @@ class GTFSFeed(BaseModel):
             "shapes.txt",
             "calendar.txt",
             "calendar_dates.txt",
+            "frequencies.txt",
         ]
     )
 

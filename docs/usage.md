@@ -41,6 +41,10 @@ python -m gtfstoosm.cli --input /path/to/gtfs.zip --output output.osc
   - Decrease for more precise matching in dense areas
   - Any value above 10 meters will be ignored because it will take too long to search
 
+#### Service Tags
+
+- `--frequency-tags`: Add `interval`, `opening_hours` and `interval:conditional` to the route relations, estimated from `frequencies.txt` or from the departures at the first stop of the trips of each stop pattern. Only regular services get them (at least 4 departures per group of days, similar headways). See the [OSM wiki](https://wiki.openstreetmap.org/wiki/Key:interval)
+
 #### Checking the Feed
 
 - `--validation-report report.json`: Report written by the [MobilityData GTFS validator](https://github.com/MobilityData/gtfs-validator) for this feed (see the README). The conversion stops if it contains `ERROR` notices; warnings are logged

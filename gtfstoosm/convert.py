@@ -13,6 +13,13 @@ from datetime import date
 import polars as pl
 import requests
 
+from gtfstoosm.frequencies import (
+    frequency_bands,
+    parse_time,
+    service_days,
+    service_tags,
+    timetable_bands,
+)
 from gtfstoosm.gtfs import GTFSFeed
 from gtfstoosm.modes import (
     ROAD_MODES,
@@ -55,6 +62,7 @@ class OSMRelationBuilder:
         modes: list[str] | None = None,
         active_on: date | None = None,
         osm_extract: OsmExtract | None = None,
+        frequency_tags: bool = False,
     ):
         """
         Initialize the OSM relation builder.
@@ -76,6 +84,7 @@ class OSMRelationBuilder:
         self.modes: list[str] = list(modes) if modes else list(SUPPORTED_MODES)
         self.active_on: date | None = active_on
         self.osm_extract: OsmExtract | None = osm_extract
+        self.frequency_tags: bool = frequency_tags
         self._new_stop_node_ids: dict[str, int] = {}
 
     def __str__(self) -> str:
@@ -235,6 +244,11 @@ class OSMRelationBuilder:
                 f"left out: {', '.join(sorted(map(str, no_timetable))[:10])}"
             )
 
+        trip_days: dict[str, frozenset[int]] = {}
+        first_departures: dict[str, int] = {}
+        if self.frequency_tags:
+            trip_days, first_departures = self._timetable_lookups(gtfs_data, trips)
+
         # Process routes using vectorized operations
         route_trip_stops = (
             trips.join(stop_times, on="trip_id")
@@ -269,6 +283,11 @@ class OSMRelationBuilder:
                 )
                 for row in route_trips_data.iter_rows(named=True)
             ]
+
+            # Trips that share a stop sequence are one pattern: keep them for the timetable
+            pattern_trips: dict[tuple, list[str]] = {}
+            for trip in trip_sequences:
+                pattern_trips.setdefault(tuple(trip.stops), []).append(trip.trip_id)
 
             # Deduplicate stop sets
             trip_sequences = deduplicate_trips(trip_sequences)
@@ -340,6 +359,16 @@ class OSMRelationBuilder:
                 if colour:
                     route_tags["colour"] = colour
 
+                if self.frequency_tags:
+                    route_tags.update(
+                        self._get_service_tags(
+                            pattern_trips[tuple(trip_sequence.stops)],
+                            gtfs_data,
+                            trip_days,
+                            first_departures,
+                        )
+                    )
+
                 if self.relation_tags:
                     route_tags.update(self.relation_tags)
 
@@ -361,6 +390,52 @@ class OSMRelationBuilder:
                     relation.add_member(osm_type="way", ref=way_id)
 
                 self.relations.append(relation)
+
+    @staticmethod
+    def _timetable_lookups(
+        gtfs_data: dict[str, pl.DataFrame], trips: pl.DataFrame
+    ) -> tuple[dict[str, frozenset[int]], dict[str, int]]:
+        """Days of each trip, and its departure from its first stop (in seconds)."""
+        days_of_service = service_days(gtfs_data)
+        # Without any calendar nothing is known about the days: assume every day
+        no_calendar = "calendar" not in gtfs_data and "calendar_dates" not in gtfs_data
+        trip_days = {
+            row["trip_id"]: frozenset(range(7))
+            if no_calendar
+            else days_of_service.get(row["service_id"], frozenset())
+            for row in trips.select(["trip_id", "service_id"]).iter_rows(named=True)
+        }
+
+        first = (
+            gtfs_data["stop_times"]
+            .sort(["trip_id", "stop_sequence"])
+            .group_by("trip_id", maintain_order=True)
+            .first()
+        )
+        departures = {}
+        for row in first.iter_rows(named=True):
+            seconds = parse_time(row.get("departure_time"))
+            if seconds is None:
+                seconds = parse_time(row.get("arrival_time"))
+            if seconds is not None:
+                departures[row["trip_id"]] = seconds
+        return trip_days, departures
+
+    @staticmethod
+    def _get_service_tags(
+        trip_ids: list[str],
+        gtfs_data: dict[str, pl.DataFrame],
+        trip_days: dict[str, frozenset[int]],
+        first_departures: dict[str, int],
+    ) -> dict[str, str]:
+        """interval/opening_hours tags of a stop pattern, from frequencies and timetable."""
+        frequencies = gtfs_data.get("frequencies")
+        bands = []
+        if frequencies is not None:
+            bands = frequency_bands(trip_ids, frequencies, trip_days)
+        if not bands:
+            bands = timetable_bands(trip_ids, first_departures, trip_days)
+        return service_tags(bands)
 
     @staticmethod
     def _get_terminus_names(stop_locations: pl.DataFrame) -> tuple[str, str]:
@@ -859,6 +934,8 @@ def convert_gtfs_to_osm(
               gtfs:route_id and gtfs:trip_id:sample tags (default: None)
             - ptv2_names: Name routes "bus 1: A => B" instead of "Route 1 Long Name" (default: False)
             - modes: OSM route values to convert, e.g. ["bus", "tram"] (default: all supported modes)
+            - frequency_tags: Add interval, opening_hours and interval:conditional tags estimated
+              from frequencies.txt or the timetable (default: False)
             - osm_file: OSM extract (.osm.pbf...) to read stops and ways from instead of
               querying Overpass and Valhalla (default: None, online lookups)
             - active_on: datetime.date; routes without service from that day are left out (default: None, no filter)
@@ -906,6 +983,7 @@ def convert_gtfs_to_osm(
             modes=options.get("modes"),
             active_on=options.get("active_on"),
             osm_extract=osm_extract,
+            frequency_tags=bool(options.get("frequency_tags", False)),
         )
 
         logger.debug(f"OSMRelationBuilder options: {builder}")

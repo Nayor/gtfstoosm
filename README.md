@@ -201,6 +201,7 @@ The main options (all of them are in [docs/usage.md](docs/usage.md)):
 | `--route-ref-pattern REGEX` | Only convert routes whose `route_id` matches |
 | `--validation-report report.json` | Stop if the GTFS validator found errors in the feed |
 | `--ignore-validation-codes CODE...` | Validator error codes that do not stop the conversion |
+| `--frequency-tags` | Add `interval`, `opening_hours` and `interval:conditional` estimated from `frequencies.txt` or the timetable |
 | `--osm-file FILE` | Read stops and ways from a local OSM extract instead of Overpass and Valhalla (no network) |
 | `--modes MODE [MODE...]` | Only convert these modes (default: all supported modes) |
 | `--active-on YYYY-MM-DD` | Leave out routes without service from this day on (default: today) |
@@ -239,6 +240,13 @@ Before importing a feed, make sure that:
 - **Routes**: `type=route`, `public_transport:version=2`, `route` (from the GTFS
   `route_type`), `ref` (from `route_short_name`), `name`, `from` and `to` (first and last
   stop), and `colour` when the route has one.
+- **Service** (only with `--frequency-tags`): `interval` (minutes between departures),
+  `opening_hours` (first to last departure, per group of days) and `interval:conditional`
+  (other headways, for instance at peak hours). They come from `frequencies.txt` when
+  the pattern has rows in it, otherwise from the departures at the first stop. These are
+  estimates: a route gets them only if it has at least 4 departures per group of days
+  and a regular headway, and the last departure is not the end of service. The
+  days come from `calendar.txt` (and `calendar_dates.txt`).
 - **Route masters**: `type=route_master`, grouping the routes that have the same `ref`.
 
 ## Troubleshooting

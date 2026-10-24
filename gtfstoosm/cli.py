@@ -155,6 +155,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--frequency-tags",
+        dest="frequency_tags",
+        action="store_true",
+        default=False,
+        help="Add interval, opening_hours and interval:conditional to route relations, estimated from frequencies.txt or the timetable (only when the service is regular)",
+    )
+
+    parser.add_argument(
         "--osm-file",
         dest="osm_file",
         type=str,
@@ -290,6 +298,7 @@ def main(args: list[str] | None = None) -> int:
             "stop_search_radius": parsed_args.stop_search_radius,
             "add_route_direction": parsed_args.add_route_direction,
             "route_ref_pattern": parsed_args.route_ref_pattern,
+            "frequency_tags": parsed_args.frequency_tags,
             "osm_file": parsed_args.osm_file,
             "modes": parsed_args.modes,
             "active_on": None
