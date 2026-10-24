@@ -3,7 +3,8 @@
 #   docker compose run --rm test                  # offline tests
 #   docker compose run --rm lint                  # ruff
 #   docker compose run --rm convert -i /data/feed.zip -o /data/out.osc
-#   docker compose run --rm osmium extract ...    # OSM extracts (osmium-tool)
+#   docker compose --profile tools run --rm validate -i /work/feed.zip -o /work/validation
+#   docker compose --profile tools run --rm osmium extract ...    # OSM extracts (osmium-tool)
 #   docker compose run --rm pfaedle -x /data/region.osm.pbf /data/feed.zip
 #
 # Put GTFS feeds and OSM extracts in ./data (git-ignored).
@@ -37,6 +38,14 @@ services:
       - ./tests:/app/tests
     command: ["ruff", "check", "."]
     profiles: ["dev"]
+
+  # Official GTFS validator of MobilityData (Apache-2.0). It writes report.json, which
+  # can be given to convert with --validation-report.
+  validate:
+    image: ghcr.io/mobilitydata/gtfs-validator:latest
+    volumes:
+      - ./data:/work
+    profiles: ["tools"]
 
   osmium:
     build:

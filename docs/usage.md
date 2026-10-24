@@ -41,6 +41,11 @@ python -m gtfstoosm.cli --input /path/to/gtfs.zip --output output.osc
   - Decrease for more precise matching in dense areas
   - Any value above 10 meters will be ignored because it will take too long to search
 
+#### Checking the Feed
+
+- `--validation-report report.json`: Report written by the [MobilityData GTFS validator](https://github.com/MobilityData/gtfs-validator) for this feed (see the README). The conversion stops if it contains `ERROR` notices; warnings are logged
+- `--ignore-validation-codes CODE [CODE...]`: Error codes of the report that do not stop the conversion
+
 #### Offline Data
 
 - `--osm-file FILE`: Read existing stops and the ways followed by the shapes from this OSM extract (anything osmium reads: `.osm.pbf`, `.osm`...) instead of querying Overpass and Valhalla. No network is used, and all modes get their ways. Cut the extract to the area of the feed first (see the README)

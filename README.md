@@ -119,6 +119,29 @@ docker compose --profile tools run --rm pfaedle -x /data/region.osm.pbf /data/fe
 `shapes.txt` for feeds that lack them, from an OSM extract. It writes a copy of the feed
 to `data/gtfs-out`.
 
+## Checking the feed first
+
+Run the official [MobilityData GTFS validator](https://github.com/MobilityData/gtfs-validator)
+(Apache-2.0, Java, here in its own container) on the feed, then give its report to the
+converter, which refuses feeds with errors:
+
+```bash
+docker compose --profile tools run --rm validate -i /work/feed.zip -o /work/validation
+docker compose run --rm convert -i /data/feed.zip -o /data/routes.osc \
+    --validation-report /data/validation/report.json
+```
+
+`data/validation/report.html` is the human-readable report. Every `ERROR` notice stops
+the conversion; warnings are only logged. Some errors do not matter for this tool: let
+them through with `--ignore-validation-codes CODE [CODE...]`, using the code shown in
+the report. A feed that is valid is not necessarily convertible well: for example a
+feed without `shapes.txt` is valid but its routes get no ways. The validator also
+reports calendars that have expired.
+
+For very large feeds, give Java more memory, for instance with
+`-e JAVA_TOOL_OPTIONS=-Xmx4g` (`docker run`) or an `environment:` entry in
+`docker-compose.yml`.
+
 ## Prerequisites
 
 | | With Docker (recommended) | Without Docker |
@@ -176,6 +199,8 @@ The main options (all of them are in [docs/usage.md](docs/usage.md)):
 | `--add-missing-stops` | Add stops that are not in OSM as new nodes |
 | `--exclude-stops`, `--exclude-routes` | Leave the stops, or the routes, out of the output |
 | `--route-ref-pattern REGEX` | Only convert routes whose `route_id` matches |
+| `--validation-report report.json` | Stop if the GTFS validator found errors in the feed |
+| `--ignore-validation-codes CODE...` | Validator error codes that do not stop the conversion |
 | `--osm-file FILE` | Read stops and ways from a local OSM extract instead of Overpass and Valhalla (no network) |
 | `--modes MODE [MODE...]` | Only convert these modes (default: all supported modes) |
 | `--active-on YYYY-MM-DD` | Leave out routes without service from this day on (default: today) |
@@ -230,7 +255,8 @@ Before importing a feed, make sure that:
 
 ## Development
 
-Everything can run in Docker (`docker compose --profile dev run --rm test`), or
+Everything can run in Docker (`docker compose --profile dev run --rm test`; the `convert`
+image has to be rebuilt after a change, with `docker compose build convert`), or
 natively with [uv](https://docs.astral.sh/uv/):
 
 ```bash

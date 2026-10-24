@@ -13,6 +13,7 @@ from datetime import date
 from gtfstoosm.convert import convert_gtfs_to_osm
 from gtfstoosm.modes import SUPPORTED_MODES
 from gtfstoosm.utils import parse_tag_string
+from gtfstoosm.validation import blocking_errors, log_report, read_report
 
 
 def parse_cli_date(value: str) -> date:
@@ -162,6 +163,23 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--validation-report",
+        dest="validation_report",
+        type=str,
+        metavar="report.json",
+        help="Report of the MobilityData GTFS validator for this feed. The conversion stops if it contains errors (see --ignore-validation-codes)",
+    )
+
+    parser.add_argument(
+        "--ignore-validation-codes",
+        dest="ignore_validation_codes",
+        nargs="+",
+        default=[],
+        metavar="CODE",
+        help="Validator error codes that do not stop the conversion",
+    )
+
+    parser.add_argument(
         "--modes",
         dest="modes",
         nargs="+",
@@ -242,6 +260,21 @@ def main(args: list[str] | None = None) -> int:
         if parsed_args.osm_file and not os.path.exists(parsed_args.osm_file):
             logger.error(f"OSM extract not found: {parsed_args.osm_file}")
             return 1
+
+        if parsed_args.validation_report:
+            try:
+                notices = read_report(parsed_args.validation_report)
+            except (OSError, ValueError) as err:
+                logger.error(f"Cannot read the validation report: {err}")
+                return 1
+            ignored = set(parsed_args.ignore_validation_codes)
+            log_report(notices, ignored)
+            if blocking_errors(notices, ignored):
+                logger.error(
+                    "The GTFS validator found errors in this feed, not converting it. "
+                    "Fix the feed, or ignore codes with --ignore-validation-codes"
+                )
+                return 1
 
         # Validate output directory
         output_dir = os.path.dirname(parsed_args.output_file)
