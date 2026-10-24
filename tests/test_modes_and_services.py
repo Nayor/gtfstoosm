@@ -268,6 +268,47 @@ class TestClosedLines:
         assert "3" in routes(build(feed_zip))
 
 
+class TestFeedsWithoutSchedules:
+    """Feeds that say nothing about their service days or have no timetable."""
+
+    def test_feed_without_calendar_keeps_every_route(self, tmp_path, calls):
+        files = {k: v for k, v in FEED.items() if k != "calendar.txt"}
+        builder = build(
+            write_zip(tmp_path / "nocal.zip", files), active_on=date(2026, 10, 24)
+        )
+        assert set(routes(builder)) == {"1", "2", "3"}
+
+    def test_only_calendar_dates(self, tmp_path, calls):
+        files = {k: v for k, v in FEED.items() if k != "calendar.txt"}
+        files["calendar_dates.txt"] = (
+            "service_id,date,exception_type\nNOW,20261225,1\nOLD,20240101,1\n"
+        )
+        builder = build(
+            write_zip(tmp_path / "dates.zip", files), active_on=date(2026, 10, 24)
+        )
+        assert set(routes(builder)) == {"1", "2"}
+
+    def test_service_defined_nowhere_counts_as_closed(self, tmp_path, calls):
+        files = dict(FEED)
+        files["trips.txt"] = FEED["trips.txt"].replace("OLD3,OLD", "OLD3,GHOST")
+        builder = build(
+            write_zip(tmp_path / "ghost.zip", files), active_on=date(2026, 10, 24)
+        )
+        assert "3" not in routes(builder)
+
+    def test_route_without_stop_times_is_reported_and_left_out(
+        self, tmp_path, calls, caplog
+    ):
+        files = dict(FEED)
+        files["stop_times.txt"] = "\n".join(
+            line for line in STOP_TIMES.splitlines() if not line.startswith("T2,")
+        )
+        with caplog.at_level("WARNING"):
+            builder = build(write_zip(tmp_path / "nostoptimes.zip", files))
+        assert "2" not in routes(builder)
+        assert "TRAM2" in caplog.text
+
+
 class TestCommandLine:
     def test_defaults(self):
         args = parse_args(["-i", "a.zip", "-o", "b.osc"])

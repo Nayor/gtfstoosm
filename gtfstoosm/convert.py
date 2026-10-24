@@ -217,6 +217,21 @@ class OSMRelationBuilder:
 
         logger.info(f"Processing {routes_to_process.height} filtered routes")
 
+        # Routes whose trips have no timetable (stop_times) cannot be converted
+        timetabled_trips = trips.filter(
+            pl.col("trip_id").is_in(stop_times["trip_id"].unique().to_list())
+        )
+        no_timetable = set(
+            routes_to_process.filter(
+                pl.col("route_id").is_in(trips["route_id"].unique().to_list())
+            )["route_id"].to_list()
+        ) - set(timetabled_trips["route_id"].to_list())
+        if no_timetable:
+            logger.warning(
+                f"{len(no_timetable)} routes have trips but no stop_times, "
+                f"left out: {', '.join(sorted(map(str, no_timetable))[:10])}"
+            )
+
         # Process routes using vectorized operations
         route_trip_stops = (
             trips.join(stop_times, on="trip_id")
