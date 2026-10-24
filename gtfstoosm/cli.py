@@ -94,7 +94,8 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     selection.add_argument(
         "--only",
         choices=["stops", "routes"],
-        help="Only the stops, or only the routes (default: both)",
+        help="Only the stops (created and linked), or only the routes (they use the "
+        "stops OSM has; stops it lacks are left out and reported) (default: both)",
     )
     selection.add_argument(
         "--modes",
@@ -316,10 +317,11 @@ def main(args: list[str] | None = None) -> int:
 
         # Convert GTFS to OSM
         options = {
-            "exclude_stops": parsed_args.only == "routes",
             "exclude_routes": parsed_args.only == "stops",
+            # --only routes: the routes use the stops OSM has; the stops are not touched
             "add_missing_stops": not parsed_args.no_new_stops
             and parsed_args.only != "routes",
+            "link_stops": parsed_args.only != "routes",
             "stop_search_radius": parsed_args.stop_search_radius,
             "route_ref_pattern": parsed_args.route_ref_pattern,
             "frequency_tags": not parsed_args.no_service_tags,

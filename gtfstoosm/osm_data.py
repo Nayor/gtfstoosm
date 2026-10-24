@@ -59,6 +59,8 @@ class OsmExtract:
         self._stops: list[tuple[int, float, float, dict[str, str], int]] = []
         # the route and route_master relations
         self.relations: list[ExistingRelation] = []
+        # share of the points of the last shape matched that a way was found for
+        self.last_coverage: float | None = None
         # per way: id, its points as (x, y) metres, and the modes it can carry
         self._ways: list[tuple[int, list[tuple[float, float]], frozenset[str]]] = []
         self._stop_index: dict[tuple[int, int], list[int]] = defaultdict(list)
@@ -250,6 +252,7 @@ class OsmExtract:
         another is clearly closer. Runs of a single point are dropped as noise at
         junctions. Points with no way within MAX_SNAP_DISTANCE are skipped.
         """
+        self.last_coverage = 0.0
         index = self._segments_for(mode)
         if not index:
             return []
@@ -257,9 +260,12 @@ class OsmExtract:
         reach = int(MAX_SNAP_DISTANCE // CELL_SIZE) + 1
         runs: list[list[int]] = []  # [way_index, number of points]
         current: int | None = None
+        points_seen = 0
+        points_matched = 0
 
         for x, y in self._densify([self._project(lat, lon) for lat, lon in shape]):
             cx, cy = self._cell(x, y)
+            points_seen += 1
             best: dict[int, float] = {}
             for dx in range(-reach, reach + 1):
                 for dy in range(-reach, reach + 1):
@@ -272,6 +278,7 @@ class OsmExtract:
                             best[way_index] = d
             if not best:
                 continue
+            points_matched += 1
 
             nearest = min(best, key=lambda w: best[w])
             if current in best and best[current] <= best[nearest] + STAY_MARGIN:
@@ -282,6 +289,8 @@ class OsmExtract:
             else:
                 runs.append([nearest, 1])
             current = nearest
+
+        self.last_coverage = points_matched / points_seen if points_seen else 0.0
 
         # Drop single-point runs (junction noise), then merge what became adjacent
         kept = [run for run in runs if run[1] > 1] or runs

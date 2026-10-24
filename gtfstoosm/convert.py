@@ -14,7 +14,7 @@ from pathlib import Path
 import polars as pl
 import requests
 
-from gtfstoosm.compare import RouteMatch
+from gtfstoosm.compare import RouteMatch, normalize
 from gtfstoosm.extracts import prepare_extract
 from gtfstoosm.frequencies import (
     build_timetable,
@@ -31,6 +31,7 @@ from gtfstoosm.modes import (
 )
 from gtfstoosm.osm import OSMElement, OSMNode, OSMRelation
 from gtfstoosm.osm_data import OsmExtract
+from gtfstoosm.report import RouteFacts, line_table, log_table, write_csv
 from gtfstoosm.services import active_service_ids
 from gtfstoosm.update import compare_with_osm
 from gtfstoosm.utils import (
@@ -70,6 +71,7 @@ class OSMRelationBuilder:
         frequency_tags: bool = False,
         agency_tags: bool = False,
         compare_existing: bool = True,
+        link_stops: bool = True,
     ):
         """
         Initialize the OSM relation builder.
@@ -96,6 +98,10 @@ class OSMRelationBuilder:
         self._new_stop_node_ids: dict[str, int] = {}
         self._relation_ids = itertools.count(-1, -1)  # new relations: -1, -2, ...
         self.compare_existing: bool = compare_existing
+        self.link_stops: bool = link_stops  # add gtfs:stop_id to the stops of OSM
+        self.facts: dict[int, RouteFacts] = {}  # what scores a route, by relation id
+        # (distance, name agrees) of each element the last stop matching returned
+        self._match_info: list[tuple[float | None, bool]] = []
         self.matches: list[RouteMatch] = []  # routes compared with the relations of OSM
         # what is changed in objects that are in OSM already (see update.py)
         self.modifications: list[OSMElement] = []
@@ -114,6 +120,7 @@ class OSMRelationBuilder:
             "modifications",
             "stop_links",
             "matched_nodes",
+            "facts",
         }
         attrs = [
             f"{k}={v!r}"
@@ -397,6 +404,29 @@ class OSMRelationBuilder:
                             trip_sequence.shape_id, shapes
                         )
 
+                facts = RouteFacts(
+                    stops=len(stop_locations),
+                    has_shape=shapes is not None and trip_sequence.shape_id is not None,
+                    no_stop_times=not trip_sequence.stops,
+                )
+                if stop_objects:
+                    facts.max_distance = max(
+                        (d for d, _ in self._match_info if d is not None), default=0.0
+                    )
+                    facts.name_mismatches = sum(
+                        1 for _, name_ok in self._match_info if not name_ok
+                    )
+                if not self.exclude_stops and not self.add_missing_stops:
+                    facts.missing_stops = max(
+                        0, len(stop_locations) - len(stop_objects)
+                    )
+                if osm_way_ids and self.osm_extract is not None:
+                    facts.coverage = self.osm_extract.last_coverage
+                elif (
+                    self.osm_extract is not None and facts.has_shape and not osm_way_ids
+                ):
+                    facts.coverage = 0.0
+
                 # Calculate direction
                 direction = ""
                 if self.route_direction:
@@ -481,6 +511,7 @@ class OSMRelationBuilder:
                     )
                     continue
 
+                self.facts[relation.id] = facts
                 self.relations.append(relation)
 
     @staticmethod
@@ -666,24 +697,31 @@ class OSMRelationBuilder:
         )
 
         matched: dict[int, OSMNode] = {}  # row index -> OSM stop
+        distance_of: dict[int, float] = {}  # row index -> distance to that stop
         node_of_stop: dict[str, OSMNode] = {}  # a GTFS stop always gets the same node
         used_nodes: set[int] = set()
-        for _, row_index, node_index in pairs:
+        for distance, row_index, node_index in pairs:
             stop_id = rows[row_index]["stop_id"]
             if row_index in matched:
                 continue
             if stop_id in node_of_stop:
                 matched[row_index] = node_of_stop[stop_id]
+                distance_of[row_index] = distance
             elif node_index not in used_nodes:
                 node = all_osm_nodes[node_index]
                 matched[row_index] = node_of_stop[stop_id] = node
+                distance_of[row_index] = distance
                 used_nodes.add(node_index)
 
         osm_elements: list[OSMElement] = []
+        self._match_info = []
         for row_index, stop_row in enumerate(rows):
             if row_index in matched:
                 node = matched[row_index]
                 osm_elements.append(node)
+                self._match_info.append(
+                    (distance_of[row_index], self._names_agree(stop_row["name"], node))
+                )
                 self.matched_nodes[node.id] = node
                 self.stop_links.setdefault(node.id, set()).add(str(stop_row["stop_id"]))
                 continue
@@ -705,11 +743,25 @@ class OSMRelationBuilder:
                 else:
                     logger.debug(f"Skipping duplicate stop {new_stop.id}")
                 osm_elements.append(new_stop)
+                self._match_info.append((None, True))
 
         logger.info(
             f"Found {len([i for i in osm_elements if i.id > 0])} OSM stop elements, created {len([i for i in osm_elements if i.id < 0])} (ordered)"
         )
         return osm_elements
+
+    @staticmethod
+    def _names_agree(gtfs_name: str | None, node: OSMNode) -> bool:
+        """Whether the name of the stop in the feed fits that of the OSM stop.
+
+        They agree when one of them is missing, or when one contains the other once
+        case and accents are set aside ("Gare" is in "Chorges - Gare SNCF").
+        """
+        osm_name = node.tags.get("name")
+        if not gtfs_name or not osm_name:
+            return True
+        a, b = normalize(str(gtfs_name)), normalize(osm_name)
+        return a in b or b in a
 
     def _calculate_distance(
         self, lat1: float, lon1: float, lat2: float, lon2: float
@@ -1136,6 +1188,7 @@ def convert_gtfs_to_osm(
             osm_extract=osm_extract,
             frequency_tags=bool(options.get("frequency_tags", False)),
             agency_tags=bool(options.get("agency_tags", False)),
+            link_stops=bool(options.get("link_stops", True)),
         )
 
         logger.debug(f"OSMRelationBuilder options: {builder}")
@@ -1143,6 +1196,15 @@ def convert_gtfs_to_osm(
         builder.build_relations(loader.tables)
         builder.build_route_masters(loader.tables)
         compare_with_osm(builder)
+
+        matches = builder.matches or [
+            RouteMatch(relation=r)
+            for r in builder.relations
+            if r.tags.get("type") == "route"
+        ]
+        lines = line_table(matches, builder.facts, builder.feed_id)
+        log_table(lines)
+        write_csv(lines, str(Path(osm_path).with_suffix(".lines.csv")))
 
         # Write to file(s): osmChange by default, JOSM's own format, or both
         output_format = options.get("output_format", "osc")

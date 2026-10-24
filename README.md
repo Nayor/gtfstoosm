@@ -281,6 +281,31 @@ The stop search radius is the one to adjust by trial: GTFS positions are often 1
 off. A larger radius matches more stops with existing OSM ones but can pair a stop with
 its neighbour's; the closest pairs are matched first.
 
+## The table of lines
+
+Next to the result the tool writes `feed.lines.csv` (semicolon-separated, opens in a
+spreadsheet) and prints the same in the log: one row per line of the feed, best first.
+
+| Column | Meaning |
+|---|---|
+| `score`, `level` | 0-100 and `sure` (85+), `check` (60+) or `difficult`. Points are lost for: a route that differs from the one in OSM or is ambiguous, a route found in OSM without our link tags, no `stop_times`, stops left out because OSM lacks them (`--only routes`), a stop matched far away (over 10 m, over 20 m) or with another name, a shape not covered by the ways found (under 95 %, under 80 %), no shape. |
+| `new`, `link`, `same`, `different`, `ambiguous` | how many variants of the line have each status (see above) |
+| `new_stops`, `shared_with` | new stops the line brings, and the other lines that use some of them |
+| `reasons` | why the score is not 100 |
+| `josm_search` | a JOSM search expression that selects the relations of the line |
+
+How to use it: review and upload the lines with the best scores first. In JOSM, select a
+line with its `josm_search` (*Edit → Search*), then *File → Upload selection*: JOSM sends the
+selection with the new objects it needs, keeps the rest in your layer, and the new stops get
+their real ids, so a second line that shares one does not create it again. Lines that share
+new stops (`shared_with`) are therefore to be uploaded **in the same JOSM session**, not from
+separate files. This is what JOSM's documentation says for the nodes of a way; I have not
+checked it for the members of a relation: see [docs/josm-tests](docs/josm-tests/README.md).
+
+The stops and the lines can also be done in two steps: `--only stops` creates and links the
+stops, and `--only routes` (after the OSM data has been updated, a day later with Geofabrik)
+makes the lines with the stops OSM has, leaving out and reporting those it lacks.
+
 ## Reviewing and uploading
 
 1. Open JOSM and download the area of the network (*File → Download data*), so that the

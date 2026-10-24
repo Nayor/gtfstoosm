@@ -20,7 +20,7 @@ This writes `/path/to/gtfs.osm`, a file in JOSM's format. The OSM data around th
 
 ### What to convert
 
-- `--only stops|routes`: only the stops, or only the routes (default: both)
+- `--only stops|routes`: only the stops (created and linked), or only the routes: they use the stops OSM has, no stop is created or linked, and the stops OSM lacks are left out of the relations and reported (default: both)
 - `--modes MODE [MODE...]`: modes to convert, among `bus`, `trolleybus`, `tram`, `train`, `light_rail`, `subway`, `monorail`, `funicular`, `ferry`, `aerialway` (default: all of them)
   - Basic and extended GTFS route types are mapped to these modes; air, taxi and miscellaneous services are left out
 - `--route-ref-pattern REGEX`: only the routes whose `route_id` matches. Most GTFS feeds use the route's reference as `route_id`, but some use a number

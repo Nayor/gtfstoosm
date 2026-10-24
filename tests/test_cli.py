@@ -149,7 +149,7 @@ class TestMain:
         assert options["auto_extract"] is True
         assert options["osm_file"] is None
         assert options["add_missing_stops"] is True
-        assert options["exclude_stops"] is False
+        assert options["link_stops"] is True
         assert options["exclude_routes"] is False
         assert options["frequency_tags"] is True
         assert options["ptv2_names"] is True
@@ -193,14 +193,15 @@ class TestMain:
         main([str(feed), "--only", "stops"])
         options = convert.call_args[1]
         assert options["exclude_routes"] is True
-        assert options["exclude_stops"] is False
         assert options["add_missing_stops"] is True
+        assert options["link_stops"] is True
 
+        # the routes use the stops OSM has: nothing is created or linked
         main([str(feed), "--only", "routes"])
         options = convert.call_args[1]
-        assert options["exclude_stops"] is True
         assert options["exclude_routes"] is False
         assert options["add_missing_stops"] is False
+        assert options["link_stops"] is False
 
     def test_opting_out(self, convert, feed):
         main([str(feed), "--no-new-stops", "--no-service-tags", "--include-inactive"])

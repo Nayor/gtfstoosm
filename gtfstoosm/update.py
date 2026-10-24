@@ -150,7 +150,7 @@ def _compare_masters(
 
 def _link_stops(builder: "OSMRelationBuilder") -> None:
     """Add gtfs:stop_id:<feed> to the stops of OSM that the feed's stops were matched with."""
-    if not builder.feed_id:
+    if not builder.feed_id or not builder.link_stops:
         return
     key = f"gtfs:stop_id:{builder.feed_id}"
     for node_id, stop_ids in sorted(builder.stop_links.items()):
