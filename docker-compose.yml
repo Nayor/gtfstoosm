@@ -1,0 +1,58 @@
+# Everything runs in containers, nothing needs to be installed on the host.
+#
+#   docker compose run --rm test                  # offline tests
+#   docker compose run --rm lint                  # ruff
+#   docker compose run --rm convert -i /data/feed.zip -o /data/out.osc
+#   docker compose run --rm osmium extract ...    # OSM extracts (osmium-tool)
+#   docker compose run --rm pfaedle -x /data/region.osm.pbf /data/feed.zip
+#
+# Put GTFS feeds and OSM extracts in ./data (git-ignored).
+
+services:
+  convert:
+    build:
+      context: .
+      target: runtime
+    image: gtfstoosm:latest
+    volumes:
+      - ./data:/data
+
+  test:
+    build:
+      context: .
+      target: dev
+    image: gtfstoosm:dev
+    volumes:
+      - ./gtfstoosm:/app/gtfstoosm
+      - ./tests:/app/tests
+    profiles: ["dev"]
+
+  lint:
+    image: gtfstoosm:dev
+    build:
+      context: .
+      target: dev
+    volumes:
+      - ./gtfstoosm:/app/gtfstoosm
+      - ./tests:/app/tests
+    command: ["ruff", "check", "."]
+    profiles: ["dev"]
+
+  osmium:
+    build:
+      context: .
+      target: runtime
+    image: gtfstoosm:latest
+    entrypoint: ["osmium"]
+    volumes:
+      - ./data:/data
+    profiles: ["tools"]
+
+  # Official image of https://github.com/ad-freiburg/pfaedle (GPL-3.0). It writes
+  # a copy of the GTFS feed with generated shapes to ./data/gtfs-out.
+  pfaedle:
+    image: ghcr.io/ad-freiburg/pfaedle:latest
+    working_dir: /data
+    volumes:
+      - ./data:/data
+    profiles: ["tools"]
