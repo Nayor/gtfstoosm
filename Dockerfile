@@ -25,9 +25,10 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY gtfstoosm ./gtfstoosm
 RUN uv sync --frozen --no-dev
 
-# Development image: tests and linting, source is bind-mounted by compose
+# Development image: tests, linting and a watcher. The source folders are bind-mounted
+# by compose over the copies below, so a change on the disk is seen without a rebuild
 FROM base AS dev
-RUN uv pip install --python /opt/venv/bin/python pytest ruff
+RUN uv pip install --python /opt/venv/bin/python pytest ruff watchfiles
 COPY tests ./tests
 CMD ["pytest", "-m", "not slow"]
 

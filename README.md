@@ -306,10 +306,21 @@ Before importing a feed, make sure that:
 
 ## Development
 
-Everything can run in Docker (`docker compose --profile dev run --rm test`; the `convert`
-image has to be rebuilt after a change, with `docker compose build --pull convert`,
-which also fetches the latest base images), or
-natively with [uv](https://docs.astral.sh/uv/):
+Everything runs in Docker. The `dev` profile mounts the `gtfstoosm/` and `tests/` folders
+of your disk in the container, so a change is seen at once, with no rebuild:
+
+```bash
+docker compose --profile dev run --rm convert-dev /data/feed.zip   # the tool, from the code on your disk
+docker compose --profile dev run --rm test                         # the tests, once
+docker compose --profile dev run --rm watch                        # the tests, again at each change
+docker compose --profile dev run --rm lint                         # ruff
+```
+
+The first command builds the `dev` image (`docker compose --profile dev build --pull test`
+to bring it up to date). The `convert` service used in the Quick start has the code
+inside its image: after a change, rebuild it with `docker compose build --pull convert`.
+
+Without Docker, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv run --python 3.12 --with pytest python -m pytest -m "not slow"
