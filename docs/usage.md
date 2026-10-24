@@ -10,12 +10,13 @@ The only thing to give is the feed:
 python -m gtfstoosm.cli /path/to/gtfs.zip
 ```
 
-This writes `/path/to/gtfs.osc`. The OSM data around the stops of the feed is downloaded (and cached) as needed, `network` and `operator` are taken from the agency, and `gtfs:feed` from the name of the file. The options below change what is guessed.
+This writes `/path/to/gtfs.osm`, a file in JOSM's format. The OSM data around the stops of the feed is downloaded (and cached) as needed, `network` and `operator` are taken from the agency, and `gtfs:feed` from the name of the file. The options below change what is guessed.
 
 ### Output
 
 - `FEED` (or `--input`, `-i`): the GTFS feed, a zip file
-- `--output`, `-o`: the file to write (default: the feed's name with `.osc`)
+- `--output`, `-o`: the file to write (default: the feed's name with `.osm`)
+- `--format osm|osc|both`: the file format of JOSM (default), osmChange (`.osc`, for osmium and scripts), or both side by side
 
 ### What to convert
 
@@ -60,7 +61,7 @@ Routes whose trips have no `stop_times` are converted from their shape, with way
 python -m gtfstoosm.cli transit_agency.zip
 
 # only the buses and trams with a numeric id, with a network name
-python -m gtfstoosm.cli regional_transit.zip -o city.osc \
+python -m gtfstoosm.cli regional_transit.zip -o city.osm \
     --modes bus tram --route-ref-pattern '^[0-9]+$' --network "City Bus"
 
 # the stops only, matched up to 25 m
@@ -101,7 +102,7 @@ The other options are `exclude_stops`, `exclude_routes`, `route_ref_pattern`, `r
 
 ## Output Format
 
-The converter generates standard OSM XML (osmChange) files containing:
+The converter generates OSM XML containing (JOSM's format by default, osmChange with `--format osc`; the library writes osmChange unless `output_format` says otherwise):
 
 1. Nodes for the transit stops that are not found in OSM, with tags:
    - `public_transport=platform`

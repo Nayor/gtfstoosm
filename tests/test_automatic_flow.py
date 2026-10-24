@@ -172,7 +172,7 @@ class TestWholeFlow:
 
         assert main([str(feed)]) == 0
 
-        out = tmp_path / "Town Bus.osc"
+        out = tmp_path / "Town Bus.osm"
         content = out.read_text(encoding="utf8")
         assert 'k="gtfs:feed" v="town-bus"' in content
         assert 'k="operator" v="Agence"' in content

@@ -39,6 +39,20 @@ class OSMElement(BaseModel):
         if value and value != "":
             self.tags[key] = value
 
+    def tags_to_josm_xml(self, indent: str = "    ") -> str:
+        """The tags, one per line, as JOSM writes them."""
+        return "".join(
+            f'{indent}<tag k="{escape_attribute(key)}" v="{escape_attribute(value)}" />\n'
+            for key, value in self.tags.items()
+        )
+
+    def josm_attributes(self, action: str | None) -> str:
+        """The attributes after the id: version and action of an existing object."""
+        if self.id < 0:
+            return ""  # a negative id is how JOSM knows an object is new
+        version = getattr(self, "version", 1)
+        return f' version="{version}"' + (f' action="{action}"' if action else "")
+
     def tags_to_xml(self) -> str:
         """Create an XML tag element."""
         return "\n".join(
@@ -60,6 +74,14 @@ class OSMNode(OSMElement):
     )
     user: str = "gtfstoosm"
     uid: int = 1
+
+    def to_josm_xml(self, action: str | None = None) -> str:
+        """The node in the JOSM file format (see to_xml for the osmChange one)."""
+        return (
+            f'  <node id="{self.id}"{self.josm_attributes(action)} '
+            f'lat="{self.lat}" lon="{self.lon}">\n'
+            f"{self.tags_to_josm_xml()}  </node>\n"
+        )
 
     def to_xml(self) -> str:
         osm_text = f'<node id="{self.id}" lat="{self.lat}" lon="{self.lon}">'
@@ -95,6 +117,12 @@ class RelationMember(BaseModel):
     ref: int
     role: str
 
+    def to_josm_xml(self) -> str:
+        return (
+            f'    <member type="{self.type}" ref="{self.ref}" '
+            f'role="{escape_attribute(self.role)}" />\n'
+        )
+
     def to_xml(self) -> str:
         """Create an XML member element."""
         return (
@@ -122,6 +150,14 @@ class OSMRelation(OSMElement):
             raise ValueError(f"Invalid member type: {osm_type}")
 
         self.members.append(RelationMember(type=osm_type, ref=ref, role=role))
+
+    def to_josm_xml(self, action: str | None = None) -> str:
+        """The relation in the JOSM file format (see to_xml for the osmChange one)."""
+        members = "".join(member.to_josm_xml() for member in self.members)
+        return (
+            f'  <relation id="{self.id}"{self.josm_attributes(action)}>\n'
+            f"{members}{self.tags_to_josm_xml()}  </relation>\n"
+        )
 
     def to_xml(self) -> str:
         """Create an XML relation element."""

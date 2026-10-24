@@ -140,7 +140,7 @@ class TestMain:
         convert.assert_called_once()
         call_args = convert.call_args
         assert call_args[0][0] == str(feed)
-        assert call_args[0][1] == str(feed.with_suffix(".osc"))
+        assert call_args[0][1] == str(feed.with_suffix(".osm"))
 
     def test_defaults_are_the_automatic_flow(self, convert, feed):
         assert main([str(feed)]) == 0
@@ -158,6 +158,16 @@ class TestMain:
         assert options["relation_tags"] is None
         assert options["active_on"] == date.today()
         assert options["refresh"] is False
+        assert options["output_format"] == "osm"
+
+    def test_the_format_decides_the_default_file_name(self, convert, feed):
+        main([str(feed), "--format", "osc"])
+        assert convert.call_args[0][1] == str(feed.with_suffix(".osc"))
+        assert convert.call_args[1]["output_format"] == "osc"
+
+        main([str(feed), "--format", "both"])
+        assert convert.call_args[0][1] == str(feed.with_suffix(".osm"))
+        assert convert.call_args[1]["output_format"] == "both"
 
     def test_input_option_and_output_option(self, convert, feed, tmp_path):
         out = tmp_path / "result.osc"

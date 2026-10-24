@@ -6,7 +6,7 @@ Turns a public transport feed ([GTFS](https://gtfs.org/)) into a file of OpenStr
 [JOSM](https://josm.openstreetmap.de/).
 
 ```bash
-docker compose run --rm convert /data/feed.zip      # writes data/feed.osc
+docker compose run --rm convert /data/feed.zip      # writes data/feed.osm
 ```
 
 Giving the feed is enough. The OSM data around its stops is downloaded once and cached,
@@ -38,8 +38,10 @@ every result has to be checked by a person before it goes into OpenStreetMap.
    `gtfs:route_id`, `gtfs:trip_id:sample`), and an estimate of `duration`, `interval`,
    `opening_hours` and `interval:conditional` from the timetable (see [Output](#output)).
 
-The result is an [osmChange](https://wiki.openstreetmap.org/wiki/OsmChange) file
-(`.osc`) whose new objects have negative IDs.
+The result is a file in JOSM's own format (`.osm`; the new objects have negative IDs).
+`--format osc` writes an [osmChange](https://wiki.openstreetmap.org/wiki/OsmChange) file
+instead (`.osc`, for tools such as osmium and for scripts), `--format both` the two. JOSM
+is documented to open `.osm` files; I have not checked that it opens `.osc`.
 
 What it does **not** do:
 
@@ -138,9 +140,9 @@ on Linux, macOS and Windows.
    ```
 
    The first run builds the image, which takes a few minutes, and downloads the OSM
-   data. `data/feed.osc` is the result.
+   data. `data/feed.osm` is the result.
 
-4. Open `feed.osc` in JOSM (see [Reviewing and uploading](#reviewing-and-uploading)).
+4. Open `feed.osm` in JOSM (see [Reviewing and uploading](#reviewing-and-uploading)).
 
 On Windows with **Git Bash**, put `MSYS_NO_PATHCONV=1` in front of the command,
 otherwise `/data/...` is rewritten into a Windows path. PowerShell and cmd do not
@@ -229,7 +231,8 @@ tune what is guessed (all of them are in [docs/usage.md](docs/usage.md)):
 
 | Option | Effect |
 |---|---|
-| `-o`, `--output FILE` | Output file (default: the feed's name with `.osc`) |
+| `-o`, `--output FILE` | Output file (default: the feed's name with `.osm`) |
+| `--format osm\|osc\|both` | JOSM's file format (default), osmChange for other tools, or both |
 | `--only stops\|routes` | Only the stops, or only the routes |
 | `--modes MODE [MODE...]` | Only these modes |
 | `--route-ref-pattern REGEX` | Only routes whose `route_id` matches |
@@ -255,7 +258,9 @@ its neighbour's; the closest pairs are matched first.
 
 1. Open JOSM and download the area of the network (*File → Download data*), so that the
    stops and ways the relations refer to are loaded.
-2. Open the `.osc` file (*File → Open*).
+2. Open the `.osm` file (*File → Open*): it opens as a new layer. Merge it into the data
+   layer you downloaded (*Layer → Merge*, or Ctrl+M) so that the stops and ways it refers to
+   are completed.
 3. Check each relation: stop order, ways, gaps in the line, the `name`, `ref` and
    `network` tags, the `fixme` tags, and lines that already exist.
 4. Upload with a meaningful changeset comment.

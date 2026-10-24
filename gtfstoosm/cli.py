@@ -78,7 +78,15 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "--output",
         "-o",
         dest="output_file",
-        help="Output .osc file (default: the feed's name with .osc)",
+        help="Output file (default: the feed's name with .osm, or .osc for --format osc)",
+    )
+    parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=["osm", "osc", "both"],
+        default="osm",
+        help="osm: the file format of JOSM (default); osc: osmChange, for other tools "
+        "(osmium, scripts); both: the two, side by side",
     )
 
     selection = parser.add_argument_group("what to convert")
@@ -225,7 +233,9 @@ def main(args: list[str] | None = None) -> int:
     if not feed:
         logger.error("Give the GTFS feed to convert, e.g. feed.zip")
         return 1
-    output_file = parsed_args.output_file or str(Path(feed).with_suffix(".osc"))
+    output_file = parsed_args.output_file or str(
+        Path(feed).with_suffix(".osc" if parsed_args.output_format == "osc" else ".osm")
+    )
     report_dir = None  # where the validator wrote its report, removed at the end
 
     try:
@@ -322,6 +332,7 @@ def main(args: list[str] | None = None) -> int:
             "osm_file": parsed_args.osm_file,
             "auto_extract": not parsed_args.online and not parsed_args.osm_file,
             "refresh": parsed_args.refresh,
+            "output_format": parsed_args.output_format,
         }
 
         logger.debug(f"CLI options: {options}")

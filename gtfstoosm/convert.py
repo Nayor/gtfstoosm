@@ -9,6 +9,7 @@ import logging
 import random
 import time
 from datetime import date
+from pathlib import Path
 
 import polars as pl
 import requests
@@ -933,7 +934,7 @@ class OSMRelationBuilder:
 
         # Writing logic
         try:
-            with open(output_path, "w") as f:
+            with open(output_path, "w", encoding="utf-8") as f:
                 f.write("<?xml version='1.0' encoding='UTF-8'?>\n")
                 f.write("<osmChange version='0.6' generator='gtfstoosm'>\n")
                 f.write("<create>\n")
@@ -954,6 +955,31 @@ class OSMRelationBuilder:
 
             logger.info(f"Successfully wrote OSM data to {output_path}")
 
+        except Exception as e:
+            logger.error(f"Error writing OSM file: {str(e)}")
+            raise OSError(f"Failed to write OSM file: {str(e)}") from e
+
+    def write_josm_file(self, output_path: str) -> None:
+        """
+        Write the OSM data in the JOSM file format, to open in JOSM.
+
+        New objects have negative ids. Members that are in OSM already (stops, ways)
+        are not in the file: download the area in JOSM first, then merge the layer.
+
+        Args:
+            output_path: Path to write the .osm file
+        """
+        logger.info(f"Writing JOSM data to {output_path}")
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("<?xml version='1.0' encoding='UTF-8'?>\n")
+                f.write("<osm version='0.6' generator='gtfstoosm'>\n")
+                for node in [*self.new_stops, *self.nodes]:
+                    f.write(node.to_josm_xml())
+                for relation in self.relations:
+                    f.write(relation.to_josm_xml())
+                f.write("</osm>\n")
+            logger.info(f"Successfully wrote JOSM data to {output_path}")
         except Exception as e:
             logger.error(f"Error writing OSM file: {str(e)}")
             raise OSError(f"Failed to write OSM file: {str(e)}") from e
@@ -996,6 +1022,8 @@ def convert_gtfs_to_osm(
               gtfs:route_id and gtfs:trip_id:sample tags (default: None)
             - ptv2_names: Name routes "bus 1: A => B" instead of "Route 1 Long Name" (default: False)
             - modes: OSM route values to convert, e.g. ["bus", "tram"] (default: all supported modes)
+            - output_format: "osc" (osmChange, the default), "osm" (the JOSM file format) or "both"
+              (JOSM's file, and the osmChange one next to it with the .osc extension)
             - frequency_tags: Add interval, opening_hours and interval:conditional tags estimated
               from frequencies.txt or the timetable (default: False)
             - auto_extract: Download (and cache) the OSM data around the stops and read stops
@@ -1077,8 +1105,14 @@ def convert_gtfs_to_osm(
         builder.build_relations(loader.tables)
         builder.build_route_masters(loader.tables)
 
-        # Write to file
-        builder.write_to_file(osm_path)
+        # Write to file(s): osmChange by default, JOSM's own format, or both
+        output_format = options.get("output_format", "osc")
+        if output_format == "osc":
+            builder.write_to_file(osm_path)
+        else:
+            builder.write_josm_file(osm_path)
+            if output_format == "both":
+                builder.write_to_file(str(Path(osm_path).with_suffix(".osc")))
 
         return True
 
