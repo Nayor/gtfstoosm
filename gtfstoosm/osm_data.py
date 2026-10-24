@@ -8,6 +8,7 @@ for instance with `osmium extract -b minlon,minlat,maxlon,maxlat region.osm.pbf`
 import logging
 import math
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 import osmium
 
@@ -21,6 +22,18 @@ CELL_SIZE = 100.0  # metres, size of the cells of the spatial indexes
 DENSIFY_STEP = 10.0  # metres between the points of a shape that are matched
 MAX_SNAP_DISTANCE = 30.0  # metres between a shape point and the way it is matched to
 STAY_MARGIN = 8.0  # metres a point may be farther from the way it is already on
+
+
+@dataclass
+class ExistingRelation:
+    """A public transport route or route_master relation that is in OSM already."""
+
+    id: int
+    version: int
+    tags: dict[str, str]
+    members: list[tuple[str, int, str]] = field(
+        default_factory=list
+    )  # (type, ref, role)
 
 
 class OsmExtract:
@@ -42,8 +55,10 @@ class OsmExtract:
         self._lat0: float | None = None
         self._cos_lat0 = 1.0
 
-        # (id, lat, lon, tags) of the nodes that are a stop of some mode
-        self._stops: list[tuple[int, float, float, dict[str, str]]] = []
+        # (id, lat, lon, tags, version) of the nodes that are a stop of some mode
+        self._stops: list[tuple[int, float, float, dict[str, str], int]] = []
+        # the route and route_master relations
+        self.relations: list[ExistingRelation] = []
         # per way: id, its points as (x, y) metres, and the modes it can carry
         self._ways: list[tuple[int, list[tuple[float, float]], frozenset[str]]] = []
         self._stop_index: dict[tuple[int, int], list[int]] = defaultdict(list)
@@ -70,6 +85,7 @@ class OsmExtract:
         ways: list[tuple[int, list[tuple[float, float]], frozenset[str]]] = []
         seen_stops: set[int] = set()
         seen_ways: set[int] = set()
+        seen_relations: set[int] = set()
 
         for obj in self._objects():
             if obj.is_node():
@@ -83,7 +99,23 @@ class OsmExtract:
                     and any(is_stop(mode, tags) for mode in SUPPORTED_MODES)
                 ):
                     seen_stops.add(obj.id)
-                    self._stops.append((obj.id, lat, lon, tags))
+                    self._stops.append((obj.id, lat, lon, tags, obj.version))
+            elif obj.is_relation():
+                tags = {tag.k: tag.v for tag in obj.tags}
+                if obj.id not in seen_relations and tags.get("type") in (
+                    "route",
+                    "route_master",
+                ):
+                    seen_relations.add(obj.id)
+                    kinds = {"n": "node", "w": "way", "r": "relation"}
+                    self.relations.append(
+                        ExistingRelation(
+                            obj.id,
+                            obj.version,
+                            tags,
+                            [(kinds[m.type], m.ref, m.role) for m in obj.members],
+                        )
+                    )
             elif obj.is_way():
                 if obj.id in seen_ways:
                     continue
@@ -113,12 +145,12 @@ class OsmExtract:
                 (way_id, [self._project(p[0], p[1]) for p in points], modes)
             )
 
-        for index, (_, lat, lon, _) in enumerate(self._stops):
+        for index, (_, lat, lon, _, _) in enumerate(self._stops):
             self._stop_index[self._cell(*self._project(lat, lon))].append(index)
 
         logger.info(
-            f"Read {len(self._stops)} stops and {len(self._ways)} ways from "
-            + ", ".join(self.paths)
+            f"Read {len(self._stops)} stops, {len(self._ways)} ways and "
+            f"{len(self.relations)} route relations from " + ", ".join(self.paths)
         )
 
     # --- geometry ----------------------------------------------------------------
@@ -148,13 +180,17 @@ class OsmExtract:
             for dx in range(-reach, reach + 1):
                 for dy in range(-reach, reach + 1):
                     for index in self._stop_index.get((cx + dx, cy + dy), ()):
-                        stop_id, stop_lat, stop_lon, tags = self._stops[index]
+                        stop_id, stop_lat, stop_lon, tags, version = self._stops[index]
                         if stop_id in found or not is_stop(mode, tags):
                             continue
                         sx, sy = self._project(stop_lat, stop_lon)
                         if math.hypot(sx - x, sy - y) <= radius * 1.5:
                             found[stop_id] = OSMNode(
-                                id=stop_id, lat=stop_lat, lon=stop_lon, tags=tags
+                                id=stop_id,
+                                lat=stop_lat,
+                                lon=stop_lon,
+                                tags=tags,
+                                version=version,
                             )
         return list(found.values())
 
