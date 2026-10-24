@@ -146,6 +146,8 @@ The main options (all of them are in [docs/usage.md](docs/usage.md)):
 | `--relation-tags 'k=v;k=v'` | Tags added to the route and route_master relations |
 | `--stop-search-radius M` | Distance in metres to match a GTFS stop to an OSM stop (10 at most) |
 | `--add-route-direction` | Add the compass direction to route names |
+| `--ptv2-names` | Name routes `bus 1: Origin => Destination` |
+| `--feed-id ID` | Add `gtfs:feed`, `gtfs:route_id` and `gtfs:trip_id:sample` tags so the relations can be compared with the feed later (for instance with [PTNA](https://community.openstreetmap.org/t/ptna-new-feature-gtfs-osm-comparison/109659)) |
 | `-v`, `--verbose` | Detailed log |
 
 ## Reviewing and uploading
@@ -172,8 +174,8 @@ Before importing a feed, make sure that:
 - **Stops** (only with `--add-missing-stops`): `public_transport=platform`,
   `highway=bus_stop`, `name`.
 - **Routes**: `type=route`, `public_transport:version=2`, `route` (from the GTFS
-  `route_type`), `ref` (from `route_short_name`), `name`, and `colour` when the route has
-  one.
+  `route_type`), `ref` (from `route_short_name`), `name`, `from` and `to` (first and last
+  stop), and `colour` when the route has one.
 - **Route masters**: `type=route_master`, grouping the routes that have the same `ref`.
 
 ## Troubleshooting
