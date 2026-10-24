@@ -85,7 +85,9 @@ python -m gtfstoosm.cli -i transit_agency.zip -o transit_routes.osc
 Only the routes whose `route_id` matches a regular expression, tagged with their network:
 
 ```bash
-python -m gtfstoosm.cli -i regional_transit.zip -o city_bus.osc     --route-ref-pattern '^(10|20|30)$'     --relation-tags 'network=City Bus;operator=City Transit'
+python -m gtfstoosm.cli -i regional_transit.zip -o city_bus.osc \
+    --route-ref-pattern '^(10|20|30)$' \
+    --relation-tags 'network=City Bus;operator=City Transit'
 ```
 
 ### With Docker

@@ -51,8 +51,10 @@ memory:
 
 ```bash
 # Linux/macOS/Windows with Docker; region.osm.pbf is e.g. a Geofabrik download in ./data
-docker compose --profile tools run --rm osmium extract     -b 5.9,45.8,10.5,47.9 /data/region.osm.pbf -o /data/area.osm.pbf
-docker compose run --rm convert -i /data/feed.zip -o /data/routes.osc     --osm-file /data/area.osm.pbf
+docker compose --profile tools run --rm osmium extract \
+    -b 5.9,45.8,10.5,47.9 /data/region.osm.pbf -o /data/area.osm.pbf
+docker compose run --rm convert -i /data/feed.zip -o /data/routes.osc \
+    --osm-file /data/area.osm.pbf
 ```
 
 (`-b` is `min_lon,min_lat,max_lon,max_lat`; use the bounding box of your feed, a few
