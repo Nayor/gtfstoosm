@@ -345,7 +345,7 @@ class TestCommandLine:
 
     def test_closed_lines_are_left_out_unless_asked(self, feed_zip, tmp_path, calls):
         out = tmp_path / "out.osc"
-        args = ["-i", str(feed_zip), "-o", str(out)]
+        args = ["-i", str(feed_zip), "-o", str(out), "--online"]
 
         assert main([*args, "--active-on", "2026-10-24"]) == 0
         assert 'k="ref" v="1"' in out.read_text(encoding="utf8")

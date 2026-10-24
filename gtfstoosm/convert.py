@@ -23,6 +23,7 @@ from gtfstoosm.modes import (
     stop_selectors,
 )
 from gtfstoosm.osm import OSMElement, OSMNode, OSMRelation
+from gtfstoosm.extracts import prepare_extract
 from gtfstoosm.osm_data import OsmExtract
 from gtfstoosm.services import active_service_ids
 from gtfstoosm.utils import (
@@ -58,6 +59,7 @@ class OSMRelationBuilder:
         active_on: date | None = None,
         osm_extract: OsmExtract | None = None,
         frequency_tags: bool = False,
+        agency_tags: bool = False,
     ):
         """
         Initialize the OSM relation builder.
@@ -80,6 +82,7 @@ class OSMRelationBuilder:
         self.active_on: date | None = active_on
         self.osm_extract: OsmExtract | None = osm_extract
         self.frequency_tags: bool = frequency_tags
+        self.agency_tags: bool = agency_tags
         self._new_stop_node_ids: dict[str, int] = {}
 
     def __str__(self) -> str:
@@ -139,6 +142,8 @@ class OSMRelationBuilder:
             colour = format_colour(unique_route.get("route_color"))
             if colour:
                 route_master_tags["colour"] = colour
+            if self.agency_tags:
+                route_master_tags.update(self._agency_tags(gtfs_data, unique_route))
             if self.feed_id:
                 route_master_tags["gtfs:feed"] = self.feed_id
                 route_master_tags["gtfs:route_id"] = str(unique_route["route_id"])
@@ -399,6 +404,9 @@ class OSMRelationBuilder:
                         )
                     )
 
+                if self.agency_tags:
+                    route_tags.update(self._agency_tags(gtfs_data, route_info))
+
                 if not trip_sequence.stops:
                     route_tags["fixme"] = (
                         "stops to add: the GTFS feed has no stop_times for this route"
@@ -431,6 +439,22 @@ class OSMRelationBuilder:
                     continue
 
                 self.relations.append(relation)
+
+    @staticmethod
+    def _agency_tags(gtfs_data: dict[str, pl.DataFrame], route: dict) -> dict[str, str]:
+        """operator and network of a route: the name of its agency."""
+        agency = gtfs_data.get("agency")
+        if agency is None or "agency_name" not in agency.columns:
+            return {}
+        names = {
+            str(row.get("agency_id") or ""): row["agency_name"]
+            for row in agency.iter_rows(named=True)
+            if row["agency_name"]
+        }
+        name = names.get(str(route.get("agency_id") or ""))
+        if name is None and len(names) == 1:
+            name = next(iter(names.values()))
+        return {"operator": name, "network": name} if name else {}
 
     @staticmethod
     def _get_terminus_names(stop_locations: pl.DataFrame) -> tuple[str, str]:
@@ -954,6 +978,9 @@ def convert_gtfs_to_osm(
             - modes: OSM route values to convert, e.g. ["bus", "tram"] (default: all supported modes)
             - frequency_tags: Add interval, opening_hours and interval:conditional tags estimated
               from frequencies.txt or the timetable (default: False)
+            - auto_extract: Download (and cache) the OSM data around the stops and read stops
+              and ways from it (default: False); refresh: download it again
+            - agency_tags: operator and network from the agency's name (default: False)
             - osm_file: OSM extract (.osm.pbf...) to read stops and ways from instead of
               querying Overpass and Valhalla (default: None, online lookups)
             - active_on: datetime.date; routes without service from that day are left out (default: None, no filter)
@@ -982,6 +1009,26 @@ def convert_gtfs_to_osm(
             osm_extract = OsmExtract(
                 options["osm_file"], bbox=feed_bbox(loader.tables["stops"])
             )
+        elif options.get("auto_extract"):
+            served = loader.tables["stops"].filter(
+                pl.col("stop_id").is_in(
+                    loader.tables["stop_times"]["stop_id"].unique().to_list()
+                )
+            )
+            bbox = feed_bbox(served)
+            if bbox is None:
+                raise ValueError("The feed has no stop with a position")
+            points = list(
+                zip(
+                    served["stop_lat"].to_list(),
+                    served["stop_lon"].to_list(),
+                    strict=True,
+                )
+            )
+            osm_extract = OsmExtract(
+                prepare_extract(points, bbox, refresh=bool(options.get("refresh"))),
+                bbox=bbox,
+            )
 
         # Build OSM relations
         builder = OSMRelationBuilder(
@@ -1002,6 +1049,7 @@ def convert_gtfs_to_osm(
             active_on=options.get("active_on"),
             osm_extract=osm_extract,
             frequency_tags=bool(options.get("frequency_tags", False)),
+            agency_tags=bool(options.get("agency_tags", False)),
         )
 
         logger.debug(f"OSMRelationBuilder options: {builder}")

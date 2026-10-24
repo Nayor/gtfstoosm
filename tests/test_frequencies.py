@@ -271,5 +271,5 @@ class TestBuilder:
     def test_command_line_option(self, tmp_path):
         out = tmp_path / "out.osc"
         feed = timetable_feed(tmp_path, False)
-        assert main(["-i", str(feed), "-o", str(out), "--include-inactive", "--frequency-tags"]) == 0  # fmt: skip
+        assert main(["-i", str(feed), "-o", str(out), "--include-inactive", "--online"]) == 0  # fmt: skip
         assert 'k="interval" v="20"' in out.read_text(encoding="utf8")

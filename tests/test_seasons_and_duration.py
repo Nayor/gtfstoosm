@@ -169,3 +169,28 @@ class TestBuilder:
         assert tags["interval"] == "30"
         assert tags["opening_hours"] == "Jul 04-Aug 23 09:00-11:30"
         assert tags["duration"] == "00:40"
+
+
+class TestFeedInfo:
+    """The validity announced in feed_info.txt tells how long the whole feed is."""
+
+    TABLES = {
+        "calendar": calendar([("summer", *EVERY_DAY, "20260704", "20260823")]),
+    }
+
+    def test_a_single_service_is_the_whole_feed_without_feed_info(self):
+        assert service_periods(self.TABLES) == {"summer": None}
+
+    def test_with_feed_info_it_is_seasonal(self):
+        tables = dict(self.TABLES)
+        tables["feed_info"] = pl.DataFrame(
+            {"feed_start_date": ["20250901"], "feed_end_date": ["20260831"]}
+        )
+        assert service_periods(tables) == {"summer": SUMMER}
+
+    def test_unreadable_feed_info_is_ignored(self):
+        tables = dict(self.TABLES)
+        tables["feed_info"] = pl.DataFrame(
+            {"feed_start_date": [""], "feed_end_date": ["x"]}
+        )
+        assert service_periods(tables) == {"summer": None}

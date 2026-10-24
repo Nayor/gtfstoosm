@@ -117,10 +117,18 @@ def service_periods(tables: dict[str, pl.DataFrame]) -> dict[str, Period | None]
     if not periods:
         return {}
 
-    feed_days = (
-        max(end for _, end in periods.values())
-        - min(start for start, _ in periods.values())
-    ).days + 1
+    feed_start = min(start for start, _ in periods.values())
+    feed_end = max(end for _, end in periods.values())
+    # The publisher says how long the whole feed is valid; else only the services tell
+    feed_info = tables.get("feed_info")
+    if feed_info is not None and feed_info.height:
+        row = feed_info.row(0, named=True)
+        try:
+            feed_start = min(feed_start, parse_gtfs_date(row["feed_start_date"]))
+            feed_end = max(feed_end, parse_gtfs_date(row["feed_end_date"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+    feed_days = (feed_end - feed_start).days + 1
     if feed_days < MIN_FEED_DAYS:
         return dict.fromkeys(periods)
 

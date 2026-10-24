@@ -1,5 +1,6 @@
 import random
 import re
+import unicodedata
 
 import atlus
 from pydantic import BaseModel
@@ -151,6 +152,13 @@ def format_colour(colour: str | None) -> str | None:
     if len(colour) not in (3, 6) or not re.fullmatch(r"[0-9A-Fa-f]+", colour):
         return None
     return "#" + colour
+
+
+def slugify(text: str) -> str:
+    """Lowercase ASCII letters, digits and hyphens: "Réseau TBM (2026)" -> "reseau-tbm-2026"."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+    return slug or "feed"
 
 
 def parse_tag_string(tag_string: str) -> dict[str, str]:

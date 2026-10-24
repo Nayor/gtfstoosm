@@ -1,10 +1,24 @@
 import datetime
 import logging
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# An ampersand that does not start an XML entity (some names are escaped already)
+_BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)")
+
+
+def escape_attribute(value: str) -> str:
+    """Escape a text for an XML attribute, leaving entities that are already there."""
+    return (
+        _BARE_AMPERSAND.sub("&amp;", str(value))
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 class OSMElement(BaseModel):
@@ -28,7 +42,10 @@ class OSMElement(BaseModel):
     def tags_to_xml(self) -> str:
         """Create an XML tag element."""
         return "\n".join(
-            [f'<tag k="{key}" v="{value}"></tag>' for key, value in self.tags.items()]
+            [
+                f'<tag k="{escape_attribute(key)}" v="{escape_attribute(value)}"></tag>'
+                for key, value in self.tags.items()
+            ]
         )
 
 

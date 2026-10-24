@@ -13,6 +13,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PYTHONPATH=/app \
+    GTFSTOOSM_CACHE=/data/cache \
     PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /app

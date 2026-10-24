@@ -64,6 +64,7 @@ class GTFSFeed(BaseModel):
             "calendar.txt",
             "calendar_dates.txt",
             "frequencies.txt",
+            "feed_info.txt",
         ]
     )
 

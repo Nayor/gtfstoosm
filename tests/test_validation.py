@@ -76,7 +76,7 @@ def feed_zip(tmp_path, monkeypatch):
 def convert(feed_zip, tmp_path, report, *extra):
     out = tmp_path / "out.osc"
     code = main(
-        ["-i", str(feed_zip), "-o", str(out), "--include-inactive"]
+        ["-i", str(feed_zip), "-o", str(out), "--include-inactive", "--online"]
         + (["--validation-report", str(report)] if report else [])
         + list(extra)
     )
@@ -103,7 +103,7 @@ class TestCommandLine:
     def test_ignored_codes_do_not_stop_it(self, feed_zip, tmp_path):
         report = write_report(tmp_path / "r.json", [notice("invalid_url", "ERROR")])
         code, out = convert(
-            feed_zip, tmp_path, report, "--ignore-validation-codes", "invalid_url"
+            feed_zip, tmp_path, report, "--ignore-validation", "invalid_url"
         )
         assert code == 0
         assert out.exists()

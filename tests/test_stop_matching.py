@@ -92,9 +92,10 @@ class TestRadiusOption:
         return run
 
     def test_online_the_radius_is_capped_at_10_metres(self, seen):
-        assert seen("--stop-search-radius", "50") == 10
-        assert seen("--stop-search-radius", "7") == 7
+        assert seen("--online", "--stop-search-radius", "50") == 10
+        assert seen("--online", "--stop-search-radius", "7") == 7
 
     def test_with_an_extract_it_can_be_larger(self, seen):
+        assert seen("--stop-search-radius", "50") == 50
         assert seen("--osm-file", seen.osm, "--stop-search-radius", "50") == 50
-        assert seen("--osm-file", seen.osm, "--stop-search-radius", "500") == 100
+        assert seen("--stop-search-radius", "500") == 100

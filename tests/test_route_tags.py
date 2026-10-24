@@ -77,7 +77,7 @@ def test_cli_passes_feed_id_and_ptv2_names(tmp_path):
             str(out),
             "--feed-id",
             "FR-TEST",
-            "--ptv2-names",
+            "--online",
         ]
     )
     assert code == 0

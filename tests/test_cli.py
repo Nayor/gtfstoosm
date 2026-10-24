@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from datetime import date
 from unittest.mock import patch
 
 import pytest
@@ -54,420 +55,257 @@ class TestSetupLogging:
 class TestParseArgs:
     """Tests for parse_args function."""
 
-    def test_parse_args_minimal(self):
-        """Test parsing minimal required arguments."""
-        args = parse_args(["--input", "input.zip", "--output", "output.osm"])
-        assert args.input_feed == "input.zip"
-        assert args.output_file == "output.osm"
-        assert args.exclude_stops is False
-        assert args.exclude_routes is False
-        assert args.add_missing_stops is False
+    def test_only_the_feed_is_needed(self):
+        args = parse_args(["feed.zip"])
+        assert args.feed == "feed.zip"
+        assert args.input_feed is None
+        assert args.output_file is None
+        assert args.only is None
+        assert args.modes is None
+        assert args.osm_file is None
+        assert args.online is False
+        assert args.refresh is False
+        assert args.no_new_stops is False
+        assert args.no_service_tags is False
         assert args.stop_search_radius == 10.0
-        assert args.add_route_direction is False
         assert args.route_ref_pattern is None
-        assert args.relation_tags is None
+        assert args.tag == []
         assert args.verbose is False
 
-    def test_parse_args_short_options(self):
-        """Test parsing with short option flags."""
-        args = parse_args(["-i", "input.zip", "-o", "output.osm"])
+    def test_input_and_output_options(self):
+        args = parse_args(["-i", "input.zip", "-o", "output.osc"])
         assert args.input_feed == "input.zip"
-        assert args.output_file == "output.osm"
+        assert args.output_file == "output.osc"
+        args = parse_args(["--input", "input.zip", "--output", "output.osc"])
+        assert args.input_feed == "input.zip"
+        assert args.output_file == "output.osc"
 
-    def test_parse_args_missing_input(self):
-        """Test that missing input argument raises error."""
+    def test_only(self):
+        assert parse_args(["f.zip", "--only", "stops"]).only == "stops"
+        assert parse_args(["f.zip", "--only", "routes"]).only == "routes"
         with pytest.raises(SystemExit):
-            parse_args(["--output", "output.osm"])
+            parse_args(["f.zip", "--only", "everything"])
 
-    def test_parse_args_missing_output(self):
-        """Test that missing output argument raises error."""
-        with pytest.raises(SystemExit):
-            parse_args(["--input", "input.zip"])
+    def test_removed_options_are_refused(self):
+        for option in (
+            "--exclude-stops",
+            "--exclude-routes",
+            "--add-missing-stops",
+            "--add-route-direction",
+            "--ptv2-names",
+            "--frequency-tags",
+            "--relation-tags",
+        ):
+            with pytest.raises(SystemExit):
+                parse_args(["f.zip", option])
 
-    def test_parse_args_exclude_stops(self):
-        """Test exclude-stops flag."""
-        args = parse_args(
-            ["--input", "input.zip", "--output", "output.osm", "--exclude-stops"]
-        )
-        assert args.exclude_stops is True
-
-    def test_parse_args_exclude_routes(self):
-        """Test exclude-routes flag."""
-        args = parse_args(
-            ["--input", "input.zip", "--output", "output.osm", "--exclude-routes"]
-        )
-        assert args.exclude_routes is True
-
-    def test_parse_args_add_missing_stops(self):
-        """Test add-missing-stops flag."""
-        args = parse_args(
-            ["--input", "input.zip", "--output", "output.osm", "--add-missing-stops"]
-        )
-        assert args.add_missing_stops is True
-
-    def test_parse_args_stop_search_radius(self):
-        """Test custom stop search radius."""
-        args = parse_args(
-            [
-                "--input",
-                "input.zip",
-                "--output",
-                "output.osm",
-                "--stop-search-radius",
-                "15.5",
-            ]
-        )
+    def test_stop_search_radius(self):
+        args = parse_args(["f.zip", "--stop-search-radius", "15.5"])
         assert args.stop_search_radius == 15.5
 
-    def test_parse_args_add_route_direction(self):
-        """Test add-route-direction flag."""
-        args = parse_args(
-            ["--input", "input.zip", "--output", "output.osm", "--add-route-direction"]
-        )
-        assert args.add_route_direction is True
-
-    def test_parse_args_route_ref_pattern(self):
-        """Test route-ref-pattern argument."""
-        args = parse_args(
-            [
-                "--input",
-                "input.zip",
-                "--output",
-                "output.osm",
-                "--route-ref-pattern",
-                "^[0-9]+$",
-            ]
-        )
+    def test_route_ref_pattern(self):
+        args = parse_args(["f.zip", "--route-ref-pattern", "^[0-9]+$"])
         assert args.route_ref_pattern == "^[0-9]+$"
 
-    def test_parse_args_relation_tags(self):
-        """Test relation-tags argument."""
-        args = parse_args(
-            [
-                "--input",
-                "input.zip",
-                "--output",
-                "output.osm",
-                "--relation-tags",
-                "operator=Test;network=TestNet",
-            ]
-        )
-        assert args.relation_tags == "operator=Test;network=TestNet"
+    def test_tags_can_be_repeated(self):
+        args = parse_args(["f.zip", "--tag", "a=1", "--tag", "b=2", "--network", "N"])
+        assert args.tag == ["a=1", "b=2"]
+        assert args.network == "N"
 
-    def test_parse_args_verbose(self):
-        """Test verbose flag."""
-        args = parse_args(
-            ["--input", "input.zip", "--output", "output.osm", "--verbose"]
-        )
-        assert args.verbose is True
+    def test_verbose(self):
+        assert parse_args(["f.zip", "--verbose"]).verbose is True
+        assert parse_args(["f.zip", "-v"]).verbose is True
 
-    def test_parse_args_verbose_short(self):
-        """Test verbose flag with short option."""
-        args = parse_args(["--input", "input.zip", "--output", "output.osm", "-v"])
-        assert args.verbose is True
 
-    def test_parse_args_all_options(self):
-        """Test parsing all options together."""
-        args = parse_args(
-            [
-                "-i",
-                "input.zip",
-                "-o",
-                "output.osm",
-                "--exclude-stops",
-                "--add-route-direction",
-                "--stop-search-radius",
-                "20.0",
-                "--route-ref-pattern",
-                "^C",
-                "--relation-tags",
-                "operator=Test",
-                "-v",
-            ]
-        )
-        assert args.input_feed == "input.zip"
-        assert args.output_file == "output.osm"
-        assert args.exclude_stops is True
-        assert args.add_route_direction is True
-        assert args.stop_search_radius == 20.0
-        assert args.route_ref_pattern == "^C"
-        assert args.relation_tags == "operator=Test"
-        assert args.verbose is True
+@pytest.fixture
+def convert():
+    """The conversion, replaced by a recorder."""
+    with patch("gtfstoosm.cli.convert_gtfs_to_osm") as mock:
+        yield mock
+
+
+@pytest.fixture
+def feed(tmp_path):
+    path = tmp_path / "My Feed (2026).zip"
+    path.touch()
+    return path
 
 
 class TestMain:
     """Tests for main function."""
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_success(self, mock_convert, tmp_path):
-        """Test successful conversion."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
+    def test_the_feed_alone_is_enough(self, convert, feed):
+        assert main([str(feed)]) == 0
 
-        args = ["--input", str(input_file), "--output", str(output_file)]
+        convert.assert_called_once()
+        call_args = convert.call_args
+        assert call_args[0][0] == str(feed)
+        assert call_args[0][1] == str(feed.with_suffix(".osc"))
 
-        exit_code = main(args)
+    def test_defaults_are_the_automatic_flow(self, convert, feed):
+        assert main([str(feed)]) == 0
 
-        assert exit_code == 0
-        mock_convert.assert_called_once()
-        call_args = mock_convert.call_args
-        assert call_args[0][0] == str(input_file)
-        assert call_args[0][1] == str(output_file)
+        options = convert.call_args[1]
+        assert options["auto_extract"] is True
+        assert options["osm_file"] is None
+        assert options["add_missing_stops"] is True
+        assert options["exclude_stops"] is False
+        assert options["exclude_routes"] is False
+        assert options["frequency_tags"] is True
+        assert options["ptv2_names"] is True
+        assert options["agency_tags"] is True
+        assert options["feed_id"] == "my-feed-2026"
+        assert options["relation_tags"] is None
+        assert options["active_on"] == date.today()
+        assert options["refresh"] is False
 
-    def test_main_input_not_found(self, tmp_path, caplog):
-        """Test error when input file doesn't exist."""
-        output_file = tmp_path / "output.osm"
+    def test_input_option_and_output_option(self, convert, feed, tmp_path):
+        out = tmp_path / "result.osc"
+        assert main(["--input", str(feed), "--output", str(out)]) == 0
+        assert convert.call_args[0][:2] == (str(feed), str(out))
 
-        args = ["--input", "nonexistent.zip", "--output", str(output_file)]
-
+    def test_no_feed(self, convert, caplog):
         with caplog.at_level(logging.ERROR):
-            exit_code = main(args)
+            assert main([]) == 1
+        assert "Give the GTFS feed" in caplog.text
+        convert.assert_not_called()
 
-        assert exit_code == 1
+    def test_input_not_found(self, convert, caplog):
+        with caplog.at_level(logging.ERROR):
+            assert main(["nonexistent.zip"]) == 1
         assert "Input GTFS feed not found" in caplog.text
+        convert.assert_not_called()
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_conflicting_options_missing_stops(
-        self, mock_convert, tmp_path, caplog
-    ):
-        """Test error with conflicting add-missing-stops and exclude-stops options."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
+    def test_only_stops_and_only_routes(self, convert, feed):
+        main([str(feed), "--only", "stops"])
+        options = convert.call_args[1]
+        assert options["exclude_routes"] is True
+        assert options["exclude_stops"] is False
+        assert options["add_missing_stops"] is True
 
-        args = [
-            "--input",
-            str(input_file),
-            "--output",
-            str(output_file),
-            "--exclude-stops",
-            "--add-missing-stops",
-        ]
+        main([str(feed), "--only", "routes"])
+        options = convert.call_args[1]
+        assert options["exclude_stops"] is True
+        assert options["exclude_routes"] is False
+        assert options["add_missing_stops"] is False
 
+    def test_opting_out(self, convert, feed):
+        main([str(feed), "--no-new-stops", "--no-service-tags", "--include-inactive"])
+        options = convert.call_args[1]
+        assert options["add_missing_stops"] is False
+        assert options["frequency_tags"] is False
+        assert options["active_on"] is None
+
+    def test_where_the_osm_data_comes_from(self, convert, feed, tmp_path):
+        osm = tmp_path / "area.osm"
+        osm.touch()
+
+        main([str(feed), "--osm-file", str(osm)])
+        options = convert.call_args[1]
+        assert options["osm_file"] == str(osm)
+        assert options["auto_extract"] is False
+
+        main([str(feed), "--online"])
+        options = convert.call_args[1]
+        assert options["osm_file"] is None
+        assert options["auto_extract"] is False
+
+        main([str(feed), "--refresh"])
+        assert convert.call_args[1]["refresh"] is True
+
+    def test_osm_file_and_online_are_exclusive(self, convert, feed, tmp_path, caplog):
+        osm = tmp_path / "area.osm"
+        osm.touch()
         with caplog.at_level(logging.ERROR):
-            exit_code = main(args)
+            assert main([str(feed), "--osm-file", str(osm), "--online"]) == 1
+        assert "either --osm-file or --online" in caplog.text
+        convert.assert_not_called()
 
-        assert exit_code == 1
-        assert "Cannot add missing stops without including stops" in caplog.text
-        mock_convert.assert_not_called()
-
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_nothing_to_convert(self, mock_convert, tmp_path, caplog):
-        """Test error when both stops and routes are excluded."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
-
-        args = [
-            "--input",
-            str(input_file),
-            "--output",
-            str(output_file),
-            "--exclude-stops",
-            "--exclude-routes",
-        ]
-
+    def test_missing_osm_file(self, convert, feed, caplog):
         with caplog.at_level(logging.ERROR):
-            exit_code = main(args)
+            assert main([str(feed), "--osm-file", "nope.osm"]) == 1
+        assert "OSM extract not found" in caplog.text
+        convert.assert_not_called()
 
-        assert exit_code == 1
-        assert "Nothing to convert" in caplog.text
-        mock_convert.assert_not_called()
-
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_negative_search_radius(self, mock_convert, tmp_path, caplog):
-        """Test error with negative stop search radius."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
-
-        args = [
-            "--input",
-            str(input_file),
-            "--output",
-            str(output_file),
-            "--stop-search-radius",
-            "-5",
-        ]
-
+    def test_negative_search_radius(self, convert, feed, caplog):
         with caplog.at_level(logging.ERROR):
-            exit_code = main(args)
-
-        assert exit_code == 1
+            assert main([str(feed), "--stop-search-radius", "-5"]) == 1
         assert "Stop search radius must be a positive number" in caplog.text
-        mock_convert.assert_not_called()
+        convert.assert_not_called()
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_large_search_radius_warning(self, mock_convert, tmp_path, caplog):
-        """Test warning and clamping of large stop search radius."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
-
-        args = [
-            "--input",
-            str(input_file),
-            "--output",
-            str(output_file),
-            "--stop-search-radius",
-            "50",
-        ]
-
+    def test_search_radius_limits(self, convert, feed, caplog):
         with caplog.at_level(logging.WARNING):
-            exit_code = main(args)
+            main([str(feed), "--online", "--stop-search-radius", "50"])
+        assert "reverting to 10 meters" in caplog.text
+        assert convert.call_args[1]["stop_search_radius"] == 10
 
-        assert exit_code == 0
-        assert "Stop search radius is too large, reverting to 10 meters" in caplog.text
+        main([str(feed), "--stop-search-radius", "50"])
+        assert convert.call_args[1]["stop_search_radius"] == 50
 
-        # Verify the radius was clamped to 10
-        call_kwargs = mock_convert.call_args[1]
-        assert call_kwargs["stop_search_radius"] == 10
+        main([str(feed), "--stop-search-radius", "500"])
+        assert convert.call_args[1]["stop_search_radius"] == 100
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_creates_output_directory(self, mock_convert, tmp_path, caplog):
-        """Test that output directory is created if it doesn't exist."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
+    def test_creates_output_directory(self, convert, feed, tmp_path, caplog):
         output_dir = tmp_path / "new_dir" / "subdir"
-        output_file = output_dir / "output.osm"
-
-        args = ["--input", str(input_file), "--output", str(output_file)]
-
         with caplog.at_level(logging.INFO):
-            exit_code = main(args)
-
-        assert exit_code == 0
+            assert main([str(feed), "-o", str(output_dir / "output.osc")]) == 0
         assert output_dir.exists()
         assert f"Creating output directory: {output_dir}" in caplog.text
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_passes_all_options(self, mock_convert, tmp_path):
-        """Test that all options are passed to convert function."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
-
-        args = [
-            "--input",
-            str(input_file),
-            "--output",
-            str(output_file),
-            "--exclude-stops",
-            "--add-route-direction",
-            "--stop-search-radius",
-            "8.5",
-            "--route-ref-pattern",
-            "^[0-9]+$",
-            "--relation-tags",
-            "operator=Test;network=TestNet",
-        ]
-
-        exit_code = main(args)
-
-        assert exit_code == 0
-        mock_convert.assert_called_once()
-
-        call_kwargs = mock_convert.call_args[1]
-        assert call_kwargs["exclude_stops"] is True
-        assert call_kwargs["exclude_routes"] is False
-        assert call_kwargs["add_missing_stops"] is False
-        assert call_kwargs["add_route_direction"] is True
-        assert call_kwargs["stop_search_radius"] == 8.5
-        assert call_kwargs["route_ref_pattern"] == "^[0-9]+$"
-        assert call_kwargs["relation_tags"] == {
-            "operator": "Test",
-            "network": "TestNet",
+    def test_tags(self, convert, feed):
+        main(
+            [
+                str(feed),
+                "--tag",
+                "network:wikidata=Q123",
+                "--tag",
+                "fee=no",
+                "--network",
+                "City Bus",
+                "--operator",
+                "Transit",
+                "--feed-id",
+                "XX-CITY",
+            ]
+        )
+        options = convert.call_args[1]
+        assert options["relation_tags"] == {
+            "network:wikidata": "Q123",
+            "fee": "no",
+            "network": "City Bus",
+            "operator": "Transit",
         }
+        assert options["feed_id"] == "XX-CITY"
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_handles_conversion_exception(self, mock_convert, tmp_path, caplog):
-        """Test error handling when conversion raises exception."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
+    def test_filters(self, convert, feed):
+        main(
+            [
+                str(feed),
+                "--modes",
+                "tram",
+                "train",
+                "--route-ref-pattern",
+                "^[0-9]+$",
+                "--active-on",
+                "2026-10-24",
+            ]
+        )
+        options = convert.call_args[1]
+        assert options["modes"] == ["tram", "train"]
+        assert options["route_ref_pattern"] == "^[0-9]+$"
+        assert options["active_on"] == date(2026, 10, 24)
 
-        mock_convert.side_effect = ValueError("Test error")
-
-        args = ["--input", str(input_file), "--output", str(output_file)]
-
+    def test_handles_conversion_exception(self, convert, feed, caplog):
+        convert.side_effect = ValueError("Test error")
         with caplog.at_level(logging.ERROR):
-            exit_code = main(args)
-
-        assert exit_code == 1
+            assert main([str(feed)]) == 1
         assert "Conversion failed: Test error" in caplog.text
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_with_verbose_logging(self, mock_convert, tmp_path, caplog):
-        """Test that verbose flag enables debug logging."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
-
-        args = ["--input", str(input_file), "--output", str(output_file), "--verbose"]
-
+    def test_verbose_logging(self, convert, feed, caplog):
         with caplog.at_level(logging.DEBUG):
-            exit_code = main(args)
-
-        assert exit_code == 0
+            assert main([str(feed), "--verbose"]) == 0
         assert "CLI options:" in caplog.text
 
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_output_file_same_directory(self, mock_convert, tmp_path):
-        """Test output file in same directory as input (no subdirectory)."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = "output.osm"  # No directory component
-
-        args = ["--input", str(input_file), "--output", output_file]
-
-        exit_code = main(args)
-
-        assert exit_code == 0
-        mock_convert.assert_called_once()
-
-    def test_main_with_none_args_uses_sys_argv(self, tmp_path):
-        """Test that main() without args uses sys.argv."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
-
-        test_argv = [
-            "gtfstoosm",
-            "--input",
-            str(input_file),
-            "--output",
-            str(output_file),
-        ]
-
-        with patch.object(sys, "argv", test_argv):
-            with patch("gtfstoosm.cli.convert_gtfs_to_osm"):
-                exit_code = main()
-
-        assert exit_code == 0
-
-    @patch("gtfstoosm.cli.convert_gtfs_to_osm")
-    def test_main_with_relation_tags_parsing(self, mock_convert, tmp_path):
-        """Test that relation tags are properly parsed."""
-        input_file = tmp_path / "input.zip"
-        input_file.touch()
-        output_file = tmp_path / "output.osm"
-
-        args = [
-            "--input",
-            str(input_file),
-            "--output",
-            str(output_file),
-            "--relation-tags",
-            "operator=Transit;network=City Bus;network:wikidata=Q123",
-        ]
-
-        exit_code = main(args)
-
-        assert exit_code == 0
-        call_kwargs = mock_convert.call_args[1]
-        assert call_kwargs["relation_tags"] == {
-            "operator": "Transit",
-            "network": "City Bus",
-            "network:wikidata": "Q123",
-        }
+    def test_main_with_none_args_uses_sys_argv(self, convert, feed):
+        with patch.object(sys, "argv", ["gtfstoosm", str(feed)]):
+            assert main() == 0

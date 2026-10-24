@@ -1,7 +1,8 @@
 """
 Command-line interface for the GTFS to OSM converter.
 
-This module provides a CLI for converting GTFS feeds to OSM relations.
+Giving the feed is enough: `python -m gtfstoosm.cli feed.zip` writes feed.osc next to
+it, with the OSM data around the stops downloaded (and cached) as needed.
 """
 
 import argparse
@@ -9,11 +10,16 @@ import logging
 import os
 import sys
 from datetime import date
+from pathlib import Path
 
 from gtfstoosm.convert import convert_gtfs_to_osm
 from gtfstoosm.modes import SUPPORTED_MODES
-from gtfstoosm.utils import parse_tag_string
+from gtfstoosm.utils import parse_tag_string, slugify
 from gtfstoosm.validation import blocking_errors, log_report, read_report
+
+# Largest distance (in metres) between a GTFS stop and the OSM stop it is matched to
+ONLINE_RADIUS_LIMIT = 10  # Overpass has to look around every stop: slow when large
+OFFLINE_RADIUS_LIMIT = 100  # in a local extract this only avoids unrelated matches
 
 
 def parse_cli_date(value: str) -> date:
@@ -51,145 +57,35 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         Parsed arguments
     """
     parser = argparse.ArgumentParser(
-        description="Convert GTFS transit feeds to OpenStreetMap relations"
+        description=(
+            "Convert a GTFS feed to OpenStreetMap public transport data (an .osc "
+            "file to review in JOSM). Only the feed is needed: the OSM data around "
+            "its stops is downloaded and cached automatically."
+        )
     )
 
+    parser.add_argument("feed", nargs="?", help="GTFS feed (.zip)")
     parser.add_argument(
         "--input",
         "-i",
         dest="input_feed",
-        required=True,
-        help="Path to the GTFS feed zip file",
+        help="GTFS feed (.zip); same as the positional argument",
     )
-
     parser.add_argument(
         "--output",
         "-o",
         dest="output_file",
-        required=True,
-        help="Path to write the OSM XML file",
+        help="Output .osc file (default: the feed's name with .osc)",
     )
 
-    parser.add_argument(
-        "--exclude-stops",
-        dest="exclude_stops",
-        action="store_true",
-        default=False,
-        help="Exclude stops from the output",
+    selection = parser.add_argument_group("what to convert")
+    selection.add_argument(
+        "--only",
+        choices=["stops", "routes"],
+        help="Only the stops, or only the routes (default: both)",
     )
-
-    parser.add_argument(
-        "--exclude-routes",
-        dest="exclude_routes",
-        action="store_true",
-        default=False,
-        help="Exclude routes from the output",
-    )
-
-    parser.add_argument(
-        "--add-missing-stops",
-        dest="add_missing_stops",
-        action="store_true",
-        default=False,
-        help="Add stops missing from the database to the output (default: False)",
-    )
-
-    # parser.add_argument(
-    #     "--route-types",
-    #     dest="route_types",
-    #     type=int,
-    #     nargs="+",
-    #     help="Only include routes with these GTFS route_type values (space-separated). Only bus routes are currently supported.",
-    # )
-
-    # parser.add_argument(
-    #     "--agency",
-    #     dest="agency_id",
-    #     type=str,
-    #     help="Only include routes for this agency ID",
-    # )
-
-    parser.add_argument(
-        "--stop-search-radius",
-        dest="stop_search_radius",
-        type=float,
-        default=10.0,
-        help="Distance in meters within which a GTFS stop is matched to an existing OSM stop (default: 10; at most 10 online, 100 with --osm-file)",
-    )
-
-    parser.add_argument(
-        "--add-route-direction",
-        dest="add_route_direction",
-        action="store_true",
-        default=False,
-        help="Add route direction to the output (default: False)",
-    )
-
-    parser.add_argument(
-        "--route-ref-pattern",
-        dest="route_ref_pattern",
-        type=str,
-        help="Regex pattern to filter routes by route_id (e.g., '^[0-9]+$' for numeric routes only)",
-    )
-
-    parser.add_argument(
-        "--relation-tags",
-        dest="relation_tags",
-        type=str,
-        help="Semicolon-separated list of tags to add to the route and route_master relations (e.g., 'operator=TransitCenter;network=Whoville Bus;network:wikidata=Q123')",
-    )
-
-    parser.add_argument(
-        "--feed-id",
-        dest="feed_id",
-        type=str,
-        help="Identifier of this feed (e.g. 'FR-IDF-IDFM'). Adds gtfs:feed, gtfs:route_id and gtfs:trip_id:sample tags to route relations so they can be compared with the feed later",
-    )
-
-    parser.add_argument(
-        "--ptv2-names",
-        dest="ptv2_names",
-        action="store_true",
-        default=False,
-        help="Name routes like 'bus 1: Origin => Destination' (OSM public transport v2 scheme)",
-    )
-
-    parser.add_argument(
-        "--frequency-tags",
-        dest="frequency_tags",
-        action="store_true",
-        default=False,
-        help="Add interval, opening_hours and interval:conditional to route relations, estimated from frequencies.txt or the timetable (only when the service is regular)",
-    )
-
-    parser.add_argument(
-        "--osm-file",
-        dest="osm_file",
-        type=str,
-        metavar="FILE",
-        help="Read stops and ways from this OSM extract (.osm.pbf, .osm...) instead of querying Overpass and Valhalla. Nothing is sent over the network. Cut it to the area of the feed first",
-    )
-
-    parser.add_argument(
-        "--validation-report",
-        dest="validation_report",
-        type=str,
-        metavar="report.json",
-        help="Report of the MobilityData GTFS validator for this feed. The conversion stops if it contains errors (see --ignore-validation-codes)",
-    )
-
-    parser.add_argument(
-        "--ignore-validation-codes",
-        dest="ignore_validation_codes",
-        nargs="+",
-        default=[],
-        metavar="CODE",
-        help="Validator error codes that do not stop the conversion",
-    )
-
-    parser.add_argument(
+    selection.add_argument(
         "--modes",
-        dest="modes",
         nargs="+",
         choices=SUPPORTED_MODES,
         metavar="MODE",
@@ -197,30 +93,104 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         + ", ".join(SUPPORTED_MODES)
         + " (default: all of them)",
     )
+    selection.add_argument(
+        "--route-ref-pattern",
+        dest="route_ref_pattern",
+        metavar="REGEX",
+        help="Only convert routes whose route_id matches (e.g. '^[0-9]+$')",
+    )
+    selection.add_argument(
+        "--include-inactive",
+        dest="include_inactive",
+        action="store_true",
+        help="Also convert routes that no longer have service (closed lines)",
+    )
+    selection.add_argument(
+        "--no-new-stops",
+        dest="no_new_stops",
+        action="store_true",
+        help="Do not create the stops that are missing from OSM",
+    )
+    selection.add_argument(
+        "--no-service-tags",
+        dest="no_service_tags",
+        action="store_true",
+        help="Do not estimate duration, interval and opening_hours from the timetable",
+    )
+
+    tags = parser.add_argument_group("tags (guessed from the feed when not given)")
+    tags.add_argument(
+        "--feed-id",
+        dest="feed_id",
+        help="Identifier of the feed, written in gtfs:feed (default: the feed's file name)",
+    )
+    tags.add_argument(
+        "--network", help="network=* of the routes (default: the agency's name)"
+    )
+    tags.add_argument(
+        "--operator", help="operator=* of the routes (default: the agency's name)"
+    )
+    tags.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Another tag for the route relations; can be repeated",
+    )
+
+    data = parser.add_argument_group("OpenStreetMap data")
+    data.add_argument(
+        "--osm-file",
+        dest="osm_file",
+        metavar="FILE",
+        help="Use this OSM extract (.osm.pbf, .osm...) instead of downloading one",
+    )
+    data.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Download the OSM data again even if the cache is recent",
+    )
+    data.add_argument(
+        "--online",
+        action="store_true",
+        help="Ask Overpass and Valhalla instead of reading an extract (slow, "
+        "uses public servers: only for small networks)",
+    )
+    data.add_argument(
+        "--stop-search-radius",
+        dest="stop_search_radius",
+        type=float,
+        default=10.0,
+        metavar="METRES",
+        help="Distance within which a GTFS stop is matched to an OSM stop (default: "
+        f"10; at most {ONLINE_RADIUS_LIMIT} with --online, {OFFLINE_RADIUS_LIMIT} "
+        "otherwise)",
+    )
+
+    checks = parser.add_argument_group("checking the feed")
+    checks.add_argument(
+        "--validation-report",
+        dest="validation_report",
+        metavar="report.json",
+        help="Report of the MobilityData GTFS validator: stop if it has errors",
+    )
+    checks.add_argument(
+        "--ignore-validation",
+        dest="ignore_validation",
+        nargs="+",
+        default=[],
+        metavar="CODE",
+        help="Error codes of the validation report that do not stop the conversion",
+    )
 
     parser.add_argument(
         "--active-on",
         dest="active_on",
         type=parse_cli_date,
         default=None,
-        metavar="YYYY-MM-DD",
-        help="Leave out routes without service from this day on, i.e. closed lines (default: today)",
+        help=argparse.SUPPRESS,  # for tests: replaces today in the closed-line filter
     )
-
-    parser.add_argument(
-        "--include-inactive",
-        dest="include_inactive",
-        action="store_true",
-        default=False,
-        help="Convert routes even if they no longer have service",
-    )
-
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Enable verbose logging",
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Detailed log")
 
     return parser.parse_args(args)
 
@@ -241,35 +211,34 @@ def main(args: list[str] | None = None) -> int:
     logger = logging.getLogger(__name__)
     logger.info("Starting GTFS to OSM conversion")
 
+    feed = parsed_args.input_feed or parsed_args.feed
+    if not feed:
+        logger.error("Give the GTFS feed to convert, e.g. feed.zip")
+        return 1
+    output_file = parsed_args.output_file or str(Path(feed).with_suffix(".osc"))
+
     try:
         # Validate input file
-        if not os.path.exists(parsed_args.input_feed):
-            logger.error(f"Input GTFS feed not found: {parsed_args.input_feed}")
-            return 1
-
-        # Validate add missing stops
-        if parsed_args.add_missing_stops and parsed_args.exclude_stops:
-            logger.error("Cannot add missing stops without including stops")
-            return 1
-
-        # Validate something is included
-        if parsed_args.exclude_stops and parsed_args.exclude_routes:
-            logger.error("Nothing to convert")
+        if not os.path.exists(feed):
+            logger.error(f"Input GTFS feed not found: {feed}")
             return 1
 
         if parsed_args.stop_search_radius < 0:
             logger.error("Stop search radius must be a positive number")
             return 1
 
-        # Overpass has to look around every stop, which gets slow with a large radius;
-        # in a local extract the limit only avoids matching unrelated stops
-        radius_limit = 100 if parsed_args.osm_file else 10
+        radius_limit = (
+            ONLINE_RADIUS_LIMIT if parsed_args.online else OFFLINE_RADIUS_LIMIT
+        )
         if parsed_args.stop_search_radius > radius_limit:
             logger.warning(
                 f"Stop search radius is too large, reverting to {radius_limit} meters"
             )
             parsed_args.stop_search_radius = radius_limit
 
+        if parsed_args.osm_file and parsed_args.online:
+            logger.error("Use either --osm-file or --online, not both")
+            return 1
         if parsed_args.osm_file and not os.path.exists(parsed_args.osm_file):
             logger.error(f"OSM extract not found: {parsed_args.osm_file}")
             return 1
@@ -280,50 +249,57 @@ def main(args: list[str] | None = None) -> int:
             except (OSError, ValueError) as err:
                 logger.error(f"Cannot read the validation report: {err}")
                 return 1
-            ignored = set(parsed_args.ignore_validation_codes)
+            ignored = set(parsed_args.ignore_validation)
             log_report(notices, ignored)
             if blocking_errors(notices, ignored):
                 logger.error(
                     "The GTFS validator found errors in this feed, not converting it. "
-                    "Fix the feed, or ignore codes with --ignore-validation-codes"
+                    "Fix the feed, or ignore codes with --ignore-validation"
                 )
                 return 1
 
         # Validate output directory
-        output_dir = os.path.dirname(parsed_args.output_file)
+        output_dir = os.path.dirname(output_file)
         if output_dir and not os.path.exists(output_dir):
             logger.info(f"Creating output directory: {output_dir}")
             os.makedirs(output_dir, exist_ok=True)
 
+        relation_tags: dict[str, str] = {}
+        for entry in parsed_args.tag:
+            relation_tags.update(parse_tag_string(entry))
+        if parsed_args.network:
+            relation_tags["network"] = parsed_args.network
+        if parsed_args.operator:
+            relation_tags["operator"] = parsed_args.operator
+
         # Convert GTFS to OSM
         options = {
-            "exclude_stops": parsed_args.exclude_stops,
-            "exclude_routes": parsed_args.exclude_routes,
-            "add_missing_stops": parsed_args.add_missing_stops,
+            "exclude_stops": parsed_args.only == "routes",
+            "exclude_routes": parsed_args.only == "stops",
+            "add_missing_stops": not parsed_args.no_new_stops
+            and parsed_args.only != "routes",
             "stop_search_radius": parsed_args.stop_search_radius,
-            "add_route_direction": parsed_args.add_route_direction,
             "route_ref_pattern": parsed_args.route_ref_pattern,
-            "frequency_tags": parsed_args.frequency_tags,
-            "osm_file": parsed_args.osm_file,
+            "frequency_tags": not parsed_args.no_service_tags,
+            "ptv2_names": True,
+            "agency_tags": True,
+            "feed_id": parsed_args.feed_id or slugify(Path(feed).stem),
+            "relation_tags": relation_tags or None,
             "modes": parsed_args.modes,
             "active_on": None
             if parsed_args.include_inactive
             else (parsed_args.active_on or date.today()),
-            "feed_id": parsed_args.feed_id,
-            "ptv2_names": parsed_args.ptv2_names,
-            "relation_tags": parse_tag_string(parsed_args.relation_tags)
-            if parsed_args.relation_tags
-            else None,
-            # "route_types": parsed_args.route_types,
-            # "agency_id": parsed_args.agency_id,
+            "osm_file": parsed_args.osm_file,
+            "auto_extract": not parsed_args.online and not parsed_args.osm_file,
+            "refresh": parsed_args.refresh,
         }
 
         logger.debug(f"CLI options: {options}")
 
-        convert_gtfs_to_osm(parsed_args.input_feed, parsed_args.output_file, **options)
+        convert_gtfs_to_osm(feed, output_file, **options)
 
         logger.info("Conversion completed successfully")
-        logger.info(f"Output OSM file: {parsed_args.output_file}")
+        logger.info(f"Output OSM file: {output_file}")
         return 0
 
     except Exception as e:

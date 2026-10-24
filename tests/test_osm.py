@@ -1,4 +1,5 @@
 import datetime
+from xml.etree import ElementTree
 
 import pytest
 
@@ -405,3 +406,23 @@ class TestIntegration:
         assert '<member type="node" ref="1" role="stop"></member>' in relation_xml
         assert '<member type="way" ref="100" role=""></member>' in relation_xml
         assert '<member type="node" ref="2" role="stop"></member>' in relation_xml
+
+
+class TestTagEscaping:
+    """Tag keys and values are escaped in the XML, once."""
+
+    def test_special_characters(self):
+        node = OSMNode(
+            id=-1, lat=1.0, lon=2.0, tags={"name": 'Gare "Nord" & <Cie> > 1'}
+        )
+        xml = node.to_xml()
+        assert 'v="Gare &quot;Nord&quot; &amp; &lt;Cie&gt; &gt; 1"' in xml
+        ElementTree.fromstring(xml)  # well-formed
+
+    def test_already_escaped_text_is_not_escaped_again(self):
+        node = OSMNode(id=-1, lat=1.0, lon=2.0, tags={"name": "A &amp; B &lt;C&gt;"})
+        assert 'v="A &amp; B &lt;C&gt;"' in node.to_xml()
+
+    def test_numeric_entities_are_kept(self):
+        node = OSMNode(id=-1, lat=1.0, lon=2.0, tags={"name": "caf&#233;"})
+        assert 'v="caf&#233;"' in node.to_xml()
