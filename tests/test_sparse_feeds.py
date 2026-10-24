@@ -161,3 +161,36 @@ class TestFormatHelpers:
     )
     def test_format_colour(self, value, expected):
         assert format_colour(value) == expected
+
+
+class FakeOverpassResponse:
+    status_code = 200
+
+    @staticmethod
+    def json():
+        return {"elements": []}
+
+
+class TestMissingStopsWithTextIds:
+    """GTFS stops absent from OSM become new nodes, whatever their ID looks like."""
+
+    def test_new_stops_get_distinct_negative_ids(self, monkeypatch):
+        import polars as pl
+
+        monkeypatch.setattr(
+            "gtfstoosm.convert.requests.post", lambda *a, **k: FakeOverpassResponse()
+        )
+        stops = pl.DataFrame(
+            {
+                "stop_id": ["CHOGARE", "0101", "CHOGARE"],
+                "lat": [44.54607, 44.5442, 44.54607],
+                "lon": [6.27145, 6.27793, 6.27145],
+                "name": ["Gare", "Ecoles", "Gare"],
+            }
+        )
+        builder = OSMRelationBuilder()
+        elements = builder._get_stop_objects(stops, add_missing_stops=True)
+
+        assert [e.id for e in elements] == [-1, -2, -1]
+        assert [n.id for n in builder.new_stops] == [-1, -2]
+        assert builder.new_stops[0].tags["name"] == "Gare"

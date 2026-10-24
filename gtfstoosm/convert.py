@@ -60,6 +60,7 @@ class OSMRelationBuilder:
         self.relation_tags: dict[str, str] | None = relation_tags
         self.feed_id: str | None = feed_id
         self.ptv2_names: bool = ptv2_names
+        self._new_stop_node_ids: dict[str, int] = {}
 
     def __str__(self) -> str:
         # Exclude None values and internal collections
@@ -396,7 +397,7 @@ class OSMRelationBuilder:
                             if add_missing_stops:
                                 # Add the stop to the output
                                 new_stop = OSMNode(
-                                    id=-1 * stop_row["stop_id"],
+                                    id=self._new_stop_node_id(stop_row["stop_id"]),
                                     lat=stop_lat,
                                     lon=stop_lon,
                                     tags={
@@ -672,6 +673,16 @@ class OSMRelationBuilder:
         }
 
         return route_type_map.get(route_type, "bus")
+
+    def _new_stop_node_id(self, stop_id: str) -> int:
+        """Return the negative OSM node id used for a GTFS stop that is not in OSM.
+
+        GTFS stop IDs are text, so they cannot be negated: each distinct stop gets
+        the next free negative number, and the same stop always gets the same one.
+        """
+        if stop_id not in self._new_stop_node_ids:
+            self._new_stop_node_ids[stop_id] = -(len(self._new_stop_node_ids) + 1)
+        return self._new_stop_node_ids[stop_id]
 
     def is_stop_duplicate(self, new_stop: OSMNode) -> bool:
         """Check if a stop is already in self.new_stops."""
