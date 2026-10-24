@@ -26,6 +26,7 @@ from gtfstoosm.osm import OSMElement, OSMNode, OSMRelation
 from gtfstoosm.osm_data import OsmExtract
 from gtfstoosm.services import active_service_ids
 from gtfstoosm.utils import (
+    pattern_key,
     Trip,
     calculate_direction,
     deduplicate_trips,
@@ -179,6 +180,7 @@ class OSMRelationBuilder:
             trips = trips.with_columns(pl.lit(None, dtype=pl.Utf8).alias("shape_id"))
 
         logger.info(f"Processing {routes.height} routes")
+        routes_with_trips = set(trips["route_id"].to_list())
 
         # Leave out services that no longer run (closed lines)
         if self.active_on is not None:
@@ -223,7 +225,14 @@ class OSMRelationBuilder:
 
         logger.info(f"Processing {routes_to_process.height} filtered routes")
 
-        # Routes whose trips have no timetable (stop_times) cannot be converted
+        without_trips = set(routes_to_process["route_id"].to_list()) - routes_with_trips
+        if without_trips:
+            logger.warning(
+                f"{len(without_trips)} routes have no trip at all, left out: "
+                f"{', '.join(sorted(map(str, without_trips))[:10])}"
+            )
+
+        # Routes whose trips have no timetable (stop_times): no stops are known
         timetabled_trips = trips.filter(
             pl.col("trip_id").is_in(stop_times["trip_id"].unique().to_list())
         )
@@ -234,8 +243,8 @@ class OSMRelationBuilder:
         ) - set(timetabled_trips["route_id"].to_list())
         if no_timetable:
             logger.warning(
-                f"{len(no_timetable)} routes have trips but no stop_times, "
-                f"left out: {', '.join(sorted(map(str, no_timetable))[:10])}"
+                f"{len(no_timetable)} routes have trips but no stop_times, so no stops: "
+                f"{', '.join(sorted(map(str, no_timetable))[:10])}"
             )
 
         timetable = build_timetable(gtfs_data, trips) if self.frequency_tags else None
@@ -248,6 +257,37 @@ class OSMRelationBuilder:
             .group_by(["route_id", "trip_id", "shape_id"], maintain_order=True)
             .agg([pl.col("stop_id").alias("stops")])
         )
+
+        # Routes without stop_times are still imported when their trips have a shape:
+        # the relation then has ways but no stops, and is marked with a fixme
+        if no_timetable:
+            with_shape = (
+                trips.filter(
+                    pl.col("route_id").is_in(list(no_timetable))
+                    & pl.col("shape_id").is_not_null()
+                )
+                .group_by(["route_id", "shape_id"], maintain_order=True)
+                .agg(pl.col("trip_id").first())
+            )
+            no_shape = no_timetable - set(with_shape["route_id"].to_list())
+            if no_shape:
+                logger.warning(
+                    f"{len(no_shape)} routes have neither stop_times nor a shape, "
+                    f"nothing to import: {', '.join(sorted(map(str, no_shape))[:10])}"
+                )
+            if with_shape.height:
+                skeletons = with_shape.select(
+                    ["route_id", "trip_id", "shape_id"]
+                ).with_columns(
+                    pl.Series(
+                        "stops",
+                        [[] for _ in range(with_shape.height)],
+                        dtype=pl.List(pl.Utf8),
+                    )
+                )
+                route_trip_stops = pl.concat(
+                    [route_trip_stops, skeletons], how="vertical_relaxed"
+                )
 
         # Process all routes at once instead of looping
         for route_data in route_trip_stops.group_by("route_id"):
@@ -278,7 +318,7 @@ class OSMRelationBuilder:
             # Trips that share a stop sequence are one pattern: keep them for the timetable
             pattern_trips: dict[tuple, list[str]] = {}
             for trip in trip_sequences:
-                pattern_trips.setdefault(tuple(trip.stops), []).append(trip.trip_id)
+                pattern_trips.setdefault(pattern_key(trip), []).append(trip.trip_id)
 
             # Deduplicate stop sets
             trip_sequences = deduplicate_trips(trip_sequences)
@@ -353,10 +393,15 @@ class OSMRelationBuilder:
                 if timetable is not None:
                     route_tags.update(
                         pattern_service_tags(
-                            pattern_trips[tuple(trip_sequence.stops)],
+                            pattern_trips[pattern_key(trip_sequence)],
                             gtfs_data,
                             timetable,
                         )
+                    )
+
+                if not trip_sequence.stops:
+                    route_tags["fixme"] = (
+                        "stops to add: the GTFS feed has no stop_times for this route"
                     )
 
                 if self.relation_tags:
@@ -378,6 +423,12 @@ class OSMRelationBuilder:
                 # Add ways as members
                 for way_id in osm_way_ids:
                     relation.add_member(osm_type="way", ref=way_id)
+
+                if not relation.members and not trip_sequence.stops:
+                    logger.warning(
+                        f"Route {route_ref} ({osm_route_type}) has no stop_times and no way found, left out"
+                    )
+                    continue
 
                 self.relations.append(relation)
 
@@ -618,6 +669,16 @@ class OSMRelationBuilder:
         Returns:
             List of dictionaries containing stop information with lat and lon
         """
+        if not stop_ids:
+            return pl.DataFrame(
+                schema={
+                    "stop_id": pl.Utf8,
+                    "lat": pl.Float64,
+                    "lon": pl.Float64,
+                    "name": pl.Utf8,
+                }
+            )
+
         # Create a DataFrame from stop_ids to preserve order
         stop_ids_df = pl.DataFrame({"stop_id": stop_ids, "order": range(len(stop_ids))})
 

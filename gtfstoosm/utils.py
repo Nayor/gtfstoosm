@@ -27,6 +27,11 @@ def string_to_unique_int(text: str, max_int: int = 2**31 - 1) -> int:
     return hash_value % max_int  # Ensure it's within range
 
 
+def pattern_key(trip: Trip) -> tuple:
+    """What makes two trips the same pattern: their stops, or their shape without stops."""
+    return (tuple(trip.stops), None if trip.stops else trip.shape_id)
+
+
 def deduplicate_trips(trips: list[Trip]) -> list[Trip]:
     """
     Remove duplicate trips based on their stops attribute.
@@ -37,14 +42,13 @@ def deduplicate_trips(trips: list[Trip]) -> list[Trip]:
     Returns:
         List of unique Trip objects (first occurrence kept for each unique stops sequence)
     """
-    seen_stops: set[tuple[str | int, ...]] = set()
+    seen: set[tuple] = set()
     unique_trips: list[Trip] = []
 
     for trip in trips:
-        # Convert stops list to tuple for hashing
-        stops_tuple = tuple(trip.stops)
-        if stops_tuple not in seen_stops:
-            seen_stops.add(stops_tuple)
+        key = pattern_key(trip)
+        if key not in seen:
+            seen.add(key)
             unique_trips.append(trip)
 
     return unique_trips
