@@ -47,13 +47,14 @@ def build_osm(path):
         return f'<way id="{way_id}" version="1">{nds}{kv}</way>'
 
     xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6">']
-    for node_id, lat, lng, tags in nodes:
+    # osmium-tool wants the objects ordered by type then id
+    for node_id, lat, lng, tags in sorted(nodes):
         xml.append(
             f'<node id="{node_id}" version="1" lat="{lat}" lon="{lng}">{tags}</node>'
         )
     xml.append(way(100, range(1, 12), {"highway": "residential"}))
-    xml.append(way(102, range(11, 22), {"highway": "secondary"}))
     xml.append(way(101, [60, 6, 61], {"highway": "residential"}))
+    xml.append(way(102, range(11, 22), {"highway": "secondary"}))
     xml.append(way(200, range(31, 42), {"railway": "tram"}))
     xml.append("</osm>")
     path.write_text("\n".join(xml), encoding="utf8")

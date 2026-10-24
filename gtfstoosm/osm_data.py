@@ -27,15 +27,17 @@ class OsmExtract:
     """Stops and ways of a local OSM extract, with the lookups the converter needs.
 
     Args:
-        path: OSM file to read
+        path: OSM file to read, or several (objects in more than one are kept once)
         bbox: optional (min_lat, min_lon, max_lat, max_lon); objects entirely outside
             are not kept, which saves memory when the extract is larger than the feed
     """
 
     def __init__(
-        self, path: str, bbox: tuple[float, float, float, float] | None = None
+        self,
+        path: str | list[str],
+        bbox: tuple[float, float, float, float] | None = None,
     ):
-        self.path = path
+        self.paths = [path] if isinstance(path, str) else list(path)
         self.bbox = bbox
         self._lat0: float | None = None
         self._cos_lat0 = 1.0
@@ -59,20 +61,32 @@ class OsmExtract:
         min_lat, min_lon, max_lat, max_lon = self.bbox
         return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
 
+    def _objects(self):
+        """Nodes and ways of every file, each with the locations of its nodes."""
+        for path in self.paths:
+            yield from osmium.FileProcessor(path).with_locations()
+
     def _load(self) -> None:
         ways: list[tuple[int, list[tuple[float, float]], frozenset[str]]] = []
+        seen_stops: set[int] = set()
+        seen_ways: set[int] = set()
 
-        for obj in osmium.FileProcessor(self.path).with_locations():
+        for obj in self._objects():
             if obj.is_node():
                 if not obj.tags or not obj.location.valid():
                     continue
                 lat, lon = obj.location.lat, obj.location.lon
                 tags = {tag.k: tag.v for tag in obj.tags}
-                if self._inside(lat, lon) and any(
-                    is_stop(mode, tags) for mode in SUPPORTED_MODES
+                if (
+                    obj.id not in seen_stops
+                    and self._inside(lat, lon)
+                    and any(is_stop(mode, tags) for mode in SUPPORTED_MODES)
                 ):
+                    seen_stops.add(obj.id)
                     self._stops.append((obj.id, lat, lon, tags))
             elif obj.is_way():
+                if obj.id in seen_ways:
+                    continue
                 tags = {tag.k: tag.v for tag in obj.tags}
                 modes = frozenset(m for m in SUPPORTED_MODES if is_way_for(m, tags))
                 if not modes:
@@ -83,6 +97,7 @@ class OsmExtract:
                     if n.location.valid()
                 ]
                 if len(points) >= 2 and any(self._inside(p[0], p[1]) for p in points):
+                    seen_ways.add(obj.id)
                     ways.append((obj.id, points, modes))
 
         if self._stops:
@@ -102,7 +117,8 @@ class OsmExtract:
             self._stop_index[self._cell(*self._project(lat, lon))].append(index)
 
         logger.info(
-            f"Read {len(self._stops)} stops and {len(self._ways)} ways from {self.path}"
+            f"Read {len(self._stops)} stops and {len(self._ways)} ways from "
+            + ", ".join(self.paths)
         )
 
     # --- geometry ----------------------------------------------------------------
