@@ -581,39 +581,52 @@ class OSMRelationBuilder:
         A GTFS stop without an OSM stop within max_distance becomes a new node when
         add_missing_stops is set. The result is ordered like `stops`.
         """
-        osm_elements: list[OSMElement] = []
-        candidates = list(all_osm_nodes)
+        rows = list(stops.iter_rows(named=True))
 
-        for stop_row in stops.iter_rows(named=True):
-            stop_lat = stop_row["lat"]
-            stop_lon = stop_row["lon"]
-
-            # Find the closest OSM node to this stop
-            closest_node = None
-            min_distance = float("inf")
-
-            for osm_node in candidates:
-                distance = self._calculate_distance(
-                    stop_lat, stop_lon, osm_node.lat, osm_node.lon
+        # Pair every GTFS stop with the OSM stops within reach, closest pairs first,
+        # so that a stop is not given the node of its neighbour just because it
+        # comes first in the pattern
+        pairs = sorted(
+            (distance, row_index, node_index)
+            for row_index, row in enumerate(rows)
+            for node_index, node in enumerate(all_osm_nodes)
+            if (
+                distance := self._calculate_distance(
+                    row["lat"], row["lon"], node.lat, node.lon
                 )
-                if distance < min_distance and distance <= max_distance:
-                    min_distance = distance
-                    closest_node = osm_node
+            )
+            <= max_distance
+        )
 
-            if closest_node:
-                osm_elements.append(closest_node)
-                # Remove from pool to avoid duplicate matches
-                candidates.remove(closest_node)
+        matched: dict[int, OSMNode] = {}  # row index -> OSM stop
+        node_of_stop: dict[str, OSMNode] = {}  # a GTFS stop always gets the same node
+        used_nodes: set[int] = set()
+        for _, row_index, node_index in pairs:
+            stop_id = rows[row_index]["stop_id"]
+            if row_index in matched:
+                continue
+            if stop_id in node_of_stop:
+                matched[row_index] = node_of_stop[stop_id]
+            elif node_index not in used_nodes:
+                node = all_osm_nodes[node_index]
+                matched[row_index] = node_of_stop[stop_id] = node
+                used_nodes.add(node_index)
+
+        osm_elements: list[OSMElement] = []
+        for row_index, stop_row in enumerate(rows):
+            if row_index in matched:
+                osm_elements.append(matched[row_index])
                 continue
 
             logger.debug(
-                f"No OSM stop found within {max_distance}m of GTFS stop at {stop_lat}, {stop_lon}"
+                f"No OSM stop found within {max_distance}m of GTFS stop at "
+                f"{stop_row['lat']}, {stop_row['lon']}"
             )
             if add_missing_stops:
                 new_stop = OSMNode(
                     id=self._new_stop_node_id(stop_row["stop_id"]),
-                    lat=stop_lat,
-                    lon=stop_lon,
+                    lat=stop_row["lat"],
+                    lon=stop_row["lon"],
                     tags={"name": stop_row["name"], **new_stop_tags(mode)},
                 )
                 if not self.is_stop_duplicate(new_stop):

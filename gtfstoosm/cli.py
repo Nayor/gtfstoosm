@@ -114,7 +114,7 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         dest="stop_search_radius",
         type=float,
         default=10.0,
-        help="Radius to search for stops (in meters)",
+        help="Distance in meters within which a GTFS stop is matched to an existing OSM stop (default: 10; at most 10 online, 100 with --osm-file)",
     )
 
     parser.add_argument(
@@ -261,9 +261,14 @@ def main(args: list[str] | None = None) -> int:
             logger.error("Stop search radius must be a positive number")
             return 1
 
-        if parsed_args.stop_search_radius > 10:
-            logger.warning("Stop search radius is too large, reverting to 10 meters")
-            parsed_args.stop_search_radius = 10
+        # Overpass has to look around every stop, which gets slow with a large radius;
+        # in a local extract the limit only avoids matching unrelated stops
+        radius_limit = 100 if parsed_args.osm_file else 10
+        if parsed_args.stop_search_radius > radius_limit:
+            logger.warning(
+                f"Stop search radius is too large, reverting to {radius_limit} meters"
+            )
+            parsed_args.stop_search_radius = radius_limit
 
         if parsed_args.osm_file and not os.path.exists(parsed_args.osm_file):
             logger.error(f"OSM extract not found: {parsed_args.osm_file}")
