@@ -86,3 +86,34 @@ class TestOutputFormat:
             relation_tags={"note": "Trémouilles"},
         )
         assert "Trémouilles" in out.read_text(encoding="utf-8")
+
+
+class TestMapRouletteFormat:
+    """mr-cli cannot read relations of relations: the route_masters are left out."""
+
+    @pytest.fixture
+    def feed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            OSMRelationBuilder, "_get_stop_objects", lambda self, *a, **k: []
+        )
+        return write_feed(tmp_path / "feed.zip", shapes=False)
+
+    def kinds(self, path):
+        root = ElementTree.parse(path).getroot()
+        return {
+            tag.get("v")
+            for e in root.iter("relation")
+            for tag in e.findall("tag")
+            if tag.get("k") == "type"
+        }
+
+    def test_the_masters_are_written_in_the_normal_format(self, feed, tmp_path):
+        out = tmp_path / "out.osm"
+        convert_gtfs_to_osm(str(feed), str(out), output_format="osm")
+        assert self.kinds(out) == {"route", "route_master"}
+
+    def test_and_left_out_for_maproulette(self, feed, tmp_path):
+        out = tmp_path / "out.maproulette.osm"
+        convert_gtfs_to_osm(str(feed), str(out), output_format="maproulette")
+        assert self.kinds(out) == {"route"}
+        assert ElementTree.parse(out).getroot().tag == "osm"

@@ -83,10 +83,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--format",
         dest="output_format",
-        choices=["osm", "osc", "both"],
+        choices=["osm", "osc", "both", "maproulette"],
         default="osm",
         help="osm: the file format of JOSM (default); osc: osmChange, for other tools "
-        "(osmium, scripts); both: the two, side by side",
+        "(osmium, scripts); both: the two, side by side; maproulette: JOSM's format "
+        "without the route_master relations, to make a MapRoulette challenge (see the README)",
     )
 
     selection = parser.add_argument_group("what to convert")
@@ -233,9 +234,10 @@ def main(args: list[str] | None = None) -> int:
     if not feed:
         logger.error("Give the GTFS feed to convert, e.g. feed.zip")
         return 1
-    output_file = parsed_args.output_file or str(
-        Path(feed).with_suffix(".osc" if parsed_args.output_format == "osc" else ".osm")
+    suffix = {"osc": ".osc", "maproulette": ".maproulette.osm"}.get(
+        parsed_args.output_format, ".osm"
     )
+    output_file = parsed_args.output_file or str(Path(feed).with_suffix(suffix))
     report_dir = None  # where the validator wrote its report, removed at the end
 
     try:

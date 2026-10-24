@@ -990,7 +990,7 @@ class OSMRelationBuilder:
             logger.error(f"Error writing OSM file: {str(e)}")
             raise OSError(f"Failed to write OSM file: {str(e)}") from e
 
-    def write_josm_file(self, output_path: str) -> None:
+    def write_josm_file(self, output_path: str, route_masters: bool = True) -> None:
         """
         Write the OSM data in the JOSM file format, to open in JOSM.
 
@@ -999,6 +999,8 @@ class OSMRelationBuilder:
 
         Args:
             output_path: Path to write the .osm file
+            route_masters: write the route_master relations too (the MapRoulette tool
+                mr-cli cannot read relations of relations)
         """
         logger.info(f"Writing JOSM data to {output_path}")
         try:
@@ -1008,7 +1010,8 @@ class OSMRelationBuilder:
                 for node in [*self.new_stops, *self.nodes]:
                     f.write(node.to_josm_xml())
                 for relation in self.relations:
-                    f.write(relation.to_josm_xml())
+                    if route_masters or relation.tags.get("type") != "route_master":
+                        f.write(relation.to_josm_xml())
                 for element in self.modifications:
                     f.write(element.to_josm_xml("modify"))
                 f.write("</osm>\n")
@@ -1055,8 +1058,10 @@ def convert_gtfs_to_osm(
               gtfs:route_id and gtfs:trip_id:sample tags (default: None)
             - ptv2_names: Name routes "bus 1: A => B" instead of "Route 1 Long Name" (default: False)
             - modes: OSM route values to convert, e.g. ["bus", "tram"] (default: all supported modes)
-            - output_format: "osc" (osmChange, the default), "osm" (the JOSM file format) or "both"
-              (JOSM's file, and the osmChange one next to it with the .osc extension)
+            - output_format: "osc" (osmChange, the default), "osm" (the JOSM file format), "both"
+              (JOSM's file, and the osmChange one next to it with the .osc extension) or
+              "maproulette" (JOSM's file without the route_master relations, which mr-cli
+              cannot read)
             - frequency_tags: Add interval, opening_hours and interval:conditional tags estimated
               from frequencies.txt or the timetable (default: False)
             - auto_extract: Download (and cache) the OSM data around the stops and read stops
@@ -1143,6 +1148,8 @@ def convert_gtfs_to_osm(
         output_format = options.get("output_format", "osc")
         if output_format == "osc":
             builder.write_to_file(osm_path)
+        elif output_format == "maproulette":
+            builder.write_josm_file(osm_path, route_masters=False)
         else:
             builder.write_josm_file(osm_path)
             if output_format == "both":

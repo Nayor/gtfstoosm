@@ -259,7 +259,7 @@ tune what is guessed (all of them are in [docs/usage.md](docs/usage.md)):
 | Option | Effect |
 |---|---|
 | `-o`, `--output FILE` | Output file (default: the feed's name with `.osm`) |
-| `--format osm\|osc\|both` | JOSM's file format (default), osmChange for other tools, or both |
+| `--format osm\|osc\|both\|maproulette` | JOSM's file format (default), osmChange for other tools, both, or the file for a MapRoulette challenge |
 | `--only stops\|routes` | Only the stops, or only the routes |
 | `--modes MODE [MODE...]` | Only these modes |
 | `--route-ref-pattern REGEX` | Only routes whose `route_id` matches |
@@ -291,6 +291,29 @@ its neighbour's; the closest pairs are matched first.
 3. Check each relation: stop order, ways, gaps in the line, the `name`, `ref` and
    `network` tags, the `fixme` tags, and lines that already exist.
 4. Upload with a meaningful changeset comment.
+
+### Reviewing with several people: MapRoulette
+
+To share the review of a network between several mappers, the changes can be published
+as a [MapRoulette](https://maproulette.org/) "cooperative" challenge: one task per route or
+stop, each reviewed by a person who confirms it in JOSM (the change is loaded in the editor)
+and uploads it with their own account.
+
+```bash
+gtfstoosm feed.zip --format maproulette            # feed.maproulette.osm
+docker compose --profile tools run --rm maproulette cooperative change     --out /data/feed.challenge.json /data/feed.maproulette.osm
+```
+
+then create a challenge on MapRoulette and upload `feed.challenge.json` to it. The file
+for MapRoulette has no `route_master` relation (MapRoulette's tool `mr-cli` cannot read
+relations of relations): add them afterwards in JOSM, or with a normal run. Changes
+that only add tags can be made [tag fix tasks](https://learn.maproulette.org/en-US/documentation/tag-fix-challenges/)
+(`cooperative tag` instead of `cooperative change`), which the mapper approves in the
+browser. Things to know: `mr cooperative` is marked experimental by its authors (check the
+tasks it makes), it asks the OSM servers for the current version of the objects, and a
+challenge is public. On the data of this repository's test feed it makes one task per
+route and per modified stop; I have not published a challenge. The import rules below
+apply as for any other import.
 
 Before importing a feed, make sure that:
 

@@ -165,6 +165,9 @@ class TestMain:
         assert convert.call_args[0][1] == str(feed.with_suffix(".osc"))
         assert convert.call_args[1]["output_format"] == "osc"
 
+        main([str(feed), "--format", "maproulette"])
+        assert convert.call_args[0][1].endswith(".maproulette.osm")
+
         main([str(feed), "--format", "both"])
         assert convert.call_args[0][1] == str(feed.with_suffix(".osm"))
         assert convert.call_args[1]["output_format"] == "both"

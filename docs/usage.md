@@ -16,7 +16,7 @@ This writes `/path/to/gtfs.osm`, a file in JOSM's format. The OSM data around th
 
 - `FEED` (or `--input`, `-i`): the GTFS feed, a zip file
 - `--output`, `-o`: the file to write (default: the feed's name with `.osm`)
-- `--format osm|osc|both`: the file format of JOSM (default), osmChange (`.osc`, for osmium and scripts), or both side by side
+- `--format osm|osc|both|maproulette`: the file format of JOSM (default), osmChange (`.osc`, for osmium and scripts), both side by side, or JOSM's format without the route_master relations (`.maproulette.osm`), to make a MapRoulette challenge with mr-cli (see the README)
 
 ### What to convert
 

@@ -58,6 +58,18 @@ services:
       - ./data:/data
     profiles: ["tools"]
 
+  # MapRoulette's mr-cli (Node.js): turns the .osm file into the tasks of a MapRoulette
+  # "cooperative" challenge, to review the changes with several people. It does not
+  # publish anything: you upload the file it writes to MapRoulette yourself.
+  #   docker compose --profile tools run --rm maproulette cooperative change --out /data/challenge.json /data/feed.osm
+  maproulette:
+    image: node:22-slim
+    working_dir: /data
+    entrypoint: ["npx", "--yes", "@maproulette/mr-cli"]
+    volumes:
+      - ./data:/data
+    profiles: ["tools"]
+
   # Official image of https://github.com/ad-freiburg/pfaedle (GPL-3.0). It writes
   # a copy of the GTFS feed with generated shapes to ./data/gtfs-out.
   pfaedle:
