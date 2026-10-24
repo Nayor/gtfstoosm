@@ -56,6 +56,7 @@ class OSMRelationBuilder:
         self.route_direction: bool = route_direction
         self.route_ref_pattern: str | None = route_ref_pattern
         self.relation_tags: dict[str, str] | None = relation_tags
+        self._new_stop_node_ids: dict[str, int] = {}
 
     def __str__(self) -> str:
         # Exclude None values and internal collections
@@ -230,7 +231,9 @@ class OSMRelationBuilder:
                     "route": self._get_osm_route_type(route_info["route_type"]),
                     "ref": short_name,
                     "name": " ".join(
-                        part for part in ("Route", short_name, long_name, direction) if part
+                        part
+                        for part in ("Route", short_name, long_name, direction)
+                        if part
                     ),
                 }
                 colour = format_colour(route_info.get("route_color"))
@@ -365,7 +368,7 @@ class OSMRelationBuilder:
                             if add_missing_stops:
                                 # Add the stop to the output
                                 new_stop = OSMNode(
-                                    id=-1 * stop_row["stop_id"],
+                                    id=self._new_stop_node_id(stop_row["stop_id"]),
                                     lat=stop_lat,
                                     lon=stop_lon,
                                     tags={
@@ -641,6 +644,16 @@ class OSMRelationBuilder:
         }
 
         return route_type_map.get(route_type, "bus")
+
+    def _new_stop_node_id(self, stop_id: str) -> int:
+        """Return the negative OSM node id used for a GTFS stop that is not in OSM.
+
+        GTFS stop IDs are text, so they cannot be negated: each distinct stop gets
+        the next free negative number, and the same stop always gets the same one.
+        """
+        if stop_id not in self._new_stop_node_ids:
+            self._new_stop_node_ids[stop_id] = -(len(self._new_stop_node_ids) + 1)
+        return self._new_stop_node_ids[stop_id]
 
     def is_stop_duplicate(self, new_stop: OSMNode) -> bool:
         """Check if a stop is already in self.new_stops."""
