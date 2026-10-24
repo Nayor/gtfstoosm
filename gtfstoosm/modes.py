@@ -86,17 +86,84 @@ def new_stop_tags(mode: str) -> dict[str, str]:
     return {"public_transport": "platform"}
 
 
+_PUBLIC_TRANSPORT_STOPS = ("platform", "stop_position", "station")
+
+
+def stop_tag_rules(mode: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Tags that identify an existing OSM stop of a mode, as (key, accepted values)."""
+    if mode in ROAD_MODES:
+        return [("highway", ("bus_stop",)), ("public_transport", ("platform",))]
+    generic = ("public_transport", _PUBLIC_TRANSPORT_STOPS)
+    if mode in RAIL_MODES:
+        return [
+            ("railway", ("tram_stop", "halt", "station", "stop", "platform")),
+            generic,
+        ]
+    if mode == "ferry":
+        return [("amenity", ("ferry_terminal",)), generic]
+    if mode == "aerialway":
+        return [("aerialway", ("station",)), generic]
+    return [generic]
+
+
+def is_stop(mode: str, tags: dict[str, str]) -> bool:
+    """Whether OSM tags describe a stop of the mode."""
+    return any(tags.get(key) in values for key, values in stop_tag_rules(mode))
+
+
 def stop_selectors(mode: str) -> list[str]:
     """Overpass node filters that find existing stops of a mode."""
+    selectors = []
+    for key, values in stop_tag_rules(mode):
+        if len(values) == 1:
+            selectors.append(f'["{key}"="{values[0]}"]')
+        else:
+            selectors.append(f'["{key}"~"^({"|".join(values)})$"]')
+    return selectors
+
+
+_ROAD_HIGHWAYS = frozenset(
+    {
+        "motorway",
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary",
+        "unclassified",
+        "residential",
+        "living_street",
+        "service",
+        "road",
+        "busway",
+        "bus_guideway",
+        "motorway_link",
+        "trunk_link",
+        "primary_link",
+        "secondary_link",
+        "tertiary_link",
+    }
+)
+
+_RAILWAY_VALUES = {
+    "tram": {"tram"},
+    "light_rail": {"light_rail", "tram"},
+    "subway": {"subway", "light_rail"},
+    "train": {"rail", "narrow_gauge", "preserved"},
+    "monorail": {"monorail"},
+    "funicular": {"funicular"},
+}
+
+
+def is_way_for(mode: str, tags: dict[str, str]) -> bool:
+    """Whether an OSM way can carry a route of the mode."""
+    if tags.get("area") == "yes":
+        return False
     if mode in ROAD_MODES:
-        return ['["highway"="bus_stop"]', '["public_transport"="platform"]']
-    generic = [
-        '["public_transport"~"^(platform|stop_position|station)$"]',
-    ]
-    if mode in RAIL_MODES:
-        return ['["railway"~"^(tram_stop|halt|station|stop|platform)$"]'] + generic
+        return tags.get("highway") in _ROAD_HIGHWAYS
+    if mode in _RAILWAY_VALUES:
+        return tags.get("railway") in _RAILWAY_VALUES[mode]
     if mode == "ferry":
-        return ['["amenity"="ferry_terminal"]'] + generic
+        return tags.get("route") == "ferry"
     if mode == "aerialway":
-        return ['["aerialway"="station"]'] + generic
-    return generic
+        return tags.get("aerialway") not in (None, "station", "pylon")
+    return False

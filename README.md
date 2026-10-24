@@ -17,9 +17,9 @@ For each route of the feed, and for each distinct sequence of stops used by its 
 2. **Stops**: looks for an existing OSM stop of the right kind (bus stop, tram stop,
    railway station, ferry terminal...) within a few metres of each GTFS stop. With
    `--add-missing-stops`, stops that are not found are added as new nodes.
-3. **Ways** (bus and trolleybus only): follows the trip's shape (`shapes.txt`) on the
-   road network and lists the OSM ways it uses. Other modes, and feeds without
-   `shapes.txt` (most Swiss feeds), get their stops only.
+3. **Ways**: follows the trip's shape (`shapes.txt`) on the network and lists the OSM
+   ways it uses. Without `--osm-file` this is only done for bus and trolleybus routes
+   (with Valhalla). Feeds without `shapes.txt` (most Swiss feeds) get their stops only.
 4. **Relations**: writes a `type=route` relation (stops as `platform` members, then
    ways if any) per stop sequence, and a `type=route_master` relation grouping them.
 
@@ -35,23 +35,44 @@ What it does **not** do:
 
 - It does not check whether the relations already exist in OSM: look before you add.
 - It does not upload anything.
-- It does not draw the track of trams, trains and the like: only bus and trolleybus
-  routes get ways. Add them in JOSM, or generate shapes with
-  [pfaedle](#quick-start-with-docker-any-os).
+- Without `--osm-file` it does not find the track of trams, trains and the like: only
+  bus and trolleybus routes get ways. Use an extract, or add them in JOSM. Feeds
+  without shapes can get them from [pfaedle](#quick-start-with-docker-any-os).
 - Stops of modes other than buses are only matched and created with minimal tags
   (`public_transport=platform`, plus `railway=platform` for rail modes): check them.
 
-### Online services used
+### Offline mode (recommended): `--osm-file`
 
-The lookups are made on public servers, so please convert one network at a time and
-avoid repeated runs on large feeds. These addresses are written in `convert.py`.
+With `--osm-file extract.osm.pbf`, stops and ways are looked up in a local OpenStreetMap
+extract and **nothing is sent over the network**. It also works for tram, train and
+the other modes: their ways are found from the shapes of the feed, on the rails.
+Cut the extract to the area of the feed first, otherwise reading it takes a lot of
+memory:
+
+```bash
+# Linux/macOS/Windows with Docker; region.osm.pbf is e.g. a Geofabrik download in ./data
+docker compose --profile tools run --rm osmium extract     -b 5.9,45.8,10.5,47.9 /data/region.osm.pbf -o /data/area.osm.pbf
+docker compose run --rm convert -i /data/feed.zip -o /data/routes.osc     --osm-file /data/area.osm.pbf
+```
+
+(`-b` is `min_lon,min_lat,max_lon,max_lat`; use the bounding box of your feed, a few
+kilometres larger.) Ways are found by snapping the (densified) points of each shape
+to the nearest way that can carry the mode. This is simple and fast but it is not a
+full map matching: a street that a shape only crosses may be picked up, and a shape
+that is far off the roads gets gaps. Check the relations in JOSM.
+
+### Online services (without `--osm-file`)
+
+Otherwise the lookups are made on public servers, so please convert one network at a
+time and avoid repeated runs on large feeds. These addresses are written in
+`convert.py`.
 
 | What | Service | What is sent |
 |---|---|---|
 | Existing OSM stops | [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) instance `maps.mail.ru` | Coordinates of the stops |
 | Ways followed by a bus trip | [Valhalla](https://valhalla.github.io/valhalla/) instance `valhalla1.openstreetmap.de` | Points of the trip shape |
 
-An internet connection is therefore required (except to run the tests).
+
 
 ## Quick start with Docker (any OS)
 
@@ -153,6 +174,7 @@ The main options (all of them are in [docs/usage.md](docs/usage.md)):
 | `--add-missing-stops` | Add stops that are not in OSM as new nodes |
 | `--exclude-stops`, `--exclude-routes` | Leave the stops, or the routes, out of the output |
 | `--route-ref-pattern REGEX` | Only convert routes whose `route_id` matches |
+| `--osm-file FILE` | Read stops and ways from a local OSM extract instead of Overpass and Valhalla (no network) |
 | `--modes MODE [MODE...]` | Only convert these modes (default: all supported modes) |
 | `--active-on YYYY-MM-DD` | Leave out routes without service from this day on (default: today) |
 | `--include-inactive` | Convert routes even if they no longer have service |

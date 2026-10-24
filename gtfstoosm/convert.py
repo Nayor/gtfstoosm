@@ -22,6 +22,7 @@ from gtfstoosm.modes import (
     stop_selectors,
 )
 from gtfstoosm.osm import OSMElement, OSMNode, OSMRelation
+from gtfstoosm.osm_data import OsmExtract
 from gtfstoosm.services import active_service_ids
 from gtfstoosm.utils import (
     Trip,
@@ -53,6 +54,7 @@ class OSMRelationBuilder:
         ptv2_names: bool = False,
         modes: list[str] | None = None,
         active_on: date | None = None,
+        osm_extract: OsmExtract | None = None,
     ):
         """
         Initialize the OSM relation builder.
@@ -73,6 +75,7 @@ class OSMRelationBuilder:
         self.ptv2_names: bool = ptv2_names
         self.modes: list[str] = list(modes) if modes else list(SUPPORTED_MODES)
         self.active_on: date | None = active_on
+        self.osm_extract: OsmExtract | None = osm_extract
         self._new_stop_node_ids: dict[str, int] = {}
 
     def __str__(self) -> str:
@@ -287,11 +290,17 @@ class OSMRelationBuilder:
                 osm_way_ids = []
                 if (
                     not self.exclude_routes
-                    and osm_route_type in ROAD_MODES
                     and shapes is not None
                     and trip_sequence.shape_id is not None
                 ):
-                    osm_way_ids = self._get_route_ways(trip_sequence.shape_id, shapes)
+                    if self.osm_extract is not None:
+                        osm_way_ids = self._get_route_ways_offline(
+                            trip_sequence.shape_id, shapes, osm_route_type
+                        )
+                    elif osm_route_type in ROAD_MODES:
+                        osm_way_ids = self._get_route_ways(
+                            trip_sequence.shape_id, shapes
+                        )
 
                 # Calculate direction
                 direction = ""
@@ -381,6 +390,16 @@ class OSMRelationBuilder:
         if stops.is_empty():
             return []
 
+        if self.osm_extract is not None:
+            candidates = self.osm_extract.stops_near(
+                list(zip(stops["lat"].to_list(), stops["lon"].to_list(), strict=True)),
+                max_distance,
+                mode,
+            )
+            return self._match_stops(
+                stops, candidates, add_missing_stops, max_distance, mode
+            )
+
         osm_elements: list[OSMElement] = []
         # overpass_url = "https://overpass-api.de/api/interpreter"
         overpass_url = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
@@ -436,55 +455,9 @@ class OSMRelationBuilder:
                             )
                             all_osm_nodes.append(osm_node)
 
-                    # Now match each input stop to its nearest OSM node
-                    for stop_row in stops.iter_rows(named=True):
-                        stop_lat = stop_row["lat"]
-                        stop_lon = stop_row["lon"]
-
-                        # Find the closest OSM node to this stop
-                        closest_node = None
-                        min_distance = float("inf")
-
-                        for osm_node in all_osm_nodes:
-                            # Calculate distance using Haversine formula (approximate)
-                            distance = self._calculate_distance(
-                                stop_lat, stop_lon, osm_node.lat, osm_node.lon
-                            )
-
-                            if (
-                                distance < min_distance and distance <= max_distance
-                            ):  # Within 5 meter radius
-                                min_distance = distance
-                                closest_node = osm_node
-
-                        # Add the closest node (or None if no match within 5m)
-                        if closest_node:
-                            osm_elements.append(closest_node)
-                            # Remove from pool to avoid duplicate matches
-                            all_osm_nodes.remove(closest_node)
-                        else:
-                            logger.debug(
-                                f"No OSM stop found within {max_distance}m of GTFS stop at {stop_lat}, {stop_lon}"
-                            )
-                            if add_missing_stops:
-                                # Add the stop to the output
-                                new_stop = OSMNode(
-                                    id=self._new_stop_node_id(stop_row["stop_id"]),
-                                    lat=stop_lat,
-                                    lon=stop_lon,
-                                    tags={
-                                        "name": stop_row["name"],
-                                        **new_stop_tags(mode),
-                                    },
-                                )
-                                if not self.is_stop_duplicate(new_stop):
-                                    logger.debug(f"Adding new stop {new_stop.id}")
-                                    self.new_stops.append(new_stop)
-                                else:
-                                    logger.debug(
-                                        f"Skipping duplicate stop {new_stop.id}"
-                                    )
-                                osm_elements.append(new_stop)
+                    osm_elements = self._match_stops(
+                        stops, all_osm_nodes, add_missing_stops, max_distance, mode
+                    )
 
                     # Success - break out of retry loop
                     break
@@ -522,20 +495,63 @@ class OSMRelationBuilder:
                 logger.warning(f"Error querying nearby stops: {str(e)}")
                 break
 
-        # After processing all stops, batch check for duplicates
-        if add_missing_stops:
-            existing_stop_ids = {stop.id for stop in self.new_stops}
-            new_stops_to_add = []
+        return osm_elements
 
-            for element in osm_elements:
-                if element.id < 0 and element.id not in existing_stop_ids:
-                    new_stops_to_add.append(element)
-                    existing_stop_ids.add(
-                        element.id
-                    )  # Prevent duplicates within this batch
+    def _match_stops(
+        self,
+        stops: pl.DataFrame,
+        all_osm_nodes: list[OSMNode],
+        add_missing_stops: bool,
+        max_distance: float,
+        mode: str,
+    ) -> list[OSMElement]:
+        """
+        Match each GTFS stop to the closest OSM stop among the candidates.
 
-            self.new_stops.extend(new_stops_to_add)
-            logger.debug(f"Added {len(new_stops_to_add)} new stops")
+        A GTFS stop without an OSM stop within max_distance becomes a new node when
+        add_missing_stops is set. The result is ordered like `stops`.
+        """
+        osm_elements: list[OSMElement] = []
+        candidates = list(all_osm_nodes)
+
+        for stop_row in stops.iter_rows(named=True):
+            stop_lat = stop_row["lat"]
+            stop_lon = stop_row["lon"]
+
+            # Find the closest OSM node to this stop
+            closest_node = None
+            min_distance = float("inf")
+
+            for osm_node in candidates:
+                distance = self._calculate_distance(
+                    stop_lat, stop_lon, osm_node.lat, osm_node.lon
+                )
+                if distance < min_distance and distance <= max_distance:
+                    min_distance = distance
+                    closest_node = osm_node
+
+            if closest_node:
+                osm_elements.append(closest_node)
+                # Remove from pool to avoid duplicate matches
+                candidates.remove(closest_node)
+                continue
+
+            logger.debug(
+                f"No OSM stop found within {max_distance}m of GTFS stop at {stop_lat}, {stop_lon}"
+            )
+            if add_missing_stops:
+                new_stop = OSMNode(
+                    id=self._new_stop_node_id(stop_row["stop_id"]),
+                    lat=stop_lat,
+                    lon=stop_lon,
+                    tags={"name": stop_row["name"], **new_stop_tags(mode)},
+                )
+                if not self.is_stop_duplicate(new_stop):
+                    logger.debug(f"Adding new stop {new_stop.id}")
+                    self.new_stops.append(new_stop)
+                else:
+                    logger.debug(f"Skipping duplicate stop {new_stop.id}")
+                osm_elements.append(new_stop)
 
         logger.info(
             f"Found {len([i for i in osm_elements if i.id > 0])} OSM stop elements, created {len([i for i in osm_elements if i.id < 0])} (ordered)"
@@ -605,6 +621,25 @@ class OSMRelationBuilder:
         )
 
         return stop_locations
+
+    def _get_route_ways_offline(
+        self, shape_id: str | int, shapes: pl.DataFrame, mode: str
+    ) -> list[int]:
+        """OSM way ids a GTFS shape follows, found in the local extract."""
+        assert self.osm_extract is not None
+        shape = shapes.filter(pl.col("shape_id") == shape_id).sort("shape_pt_sequence")
+        ways = self.osm_extract.match_ways(
+            list(
+                zip(
+                    shape["shape_pt_lat"].to_list(),
+                    shape["shape_pt_lon"].to_list(),
+                    strict=True,
+                )
+            ),
+            mode,
+        )
+        logger.info(f"Matched {len(ways)} ways for shape {shape_id} ({mode})")
+        return ways
 
     def _get_route_ways(
         self,
@@ -787,6 +822,22 @@ class OSMRelationBuilder:
             raise OSError(f"Failed to write OSM file: {str(e)}") from e
 
 
+def feed_bbox(
+    stops: pl.DataFrame, margin: float = 0.02
+) -> tuple[float, float, float, float] | None:
+    """(min_lat, min_lon, max_lat, max_lon) of the stops of a feed, with a margin in degrees."""
+    lats = stops["stop_lat"].drop_nulls()
+    lons = stops["stop_lon"].drop_nulls()
+    if lats.is_empty() or lons.is_empty():
+        return None
+    return (
+        float(lats.min()) - margin,  # type: ignore[arg-type]
+        float(lons.min()) - margin,  # type: ignore[arg-type]
+        float(lats.max()) + margin,  # type: ignore[arg-type]
+        float(lons.max()) + margin,  # type: ignore[arg-type]
+    )
+
+
 def convert_gtfs_to_osm(
     gtfs_path: str, osm_path: str, **options: dict[str, bool | int | str]
 ) -> bool:
@@ -808,6 +859,8 @@ def convert_gtfs_to_osm(
               gtfs:route_id and gtfs:trip_id:sample tags (default: None)
             - ptv2_names: Name routes "bus 1: A => B" instead of "Route 1 Long Name" (default: False)
             - modes: OSM route values to convert, e.g. ["bus", "tram"] (default: all supported modes)
+            - osm_file: OSM extract (.osm.pbf...) to read stops and ways from instead of
+              querying Overpass and Valhalla (default: None, online lookups)
             - active_on: datetime.date; routes without service from that day are left out (default: None, no filter)
 
     Returns:
@@ -829,6 +882,12 @@ def convert_gtfs_to_osm(
         loader = GTFSFeed(feed_dir=gtfs_path)
         loader.load()
 
+        osm_extract = None
+        if options.get("osm_file"):
+            osm_extract = OsmExtract(
+                options["osm_file"], bbox=feed_bbox(loader.tables["stops"])
+            )
+
         # Build OSM relations
         builder = OSMRelationBuilder(
             exclude_stops=options.get("exclude_stops", False),
@@ -846,6 +905,7 @@ def convert_gtfs_to_osm(
             ptv2_names=options.get("ptv2_names", False),
             modes=options.get("modes"),
             active_on=options.get("active_on"),
+            osm_extract=osm_extract,
         )
 
         logger.debug(f"OSMRelationBuilder options: {builder}")

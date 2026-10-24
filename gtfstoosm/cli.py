@@ -154,6 +154,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--osm-file",
+        dest="osm_file",
+        type=str,
+        metavar="FILE",
+        help="Read stops and ways from this OSM extract (.osm.pbf, .osm...) instead of querying Overpass and Valhalla. Nothing is sent over the network. Cut it to the area of the feed first",
+    )
+
+    parser.add_argument(
         "--modes",
         dest="modes",
         nargs="+",
@@ -231,6 +239,10 @@ def main(args: list[str] | None = None) -> int:
             logger.warning("Stop search radius is too large, reverting to 10 meters")
             parsed_args.stop_search_radius = 10
 
+        if parsed_args.osm_file and not os.path.exists(parsed_args.osm_file):
+            logger.error(f"OSM extract not found: {parsed_args.osm_file}")
+            return 1
+
         # Validate output directory
         output_dir = os.path.dirname(parsed_args.output_file)
         if output_dir and not os.path.exists(output_dir):
@@ -245,6 +257,7 @@ def main(args: list[str] | None = None) -> int:
             "stop_search_radius": parsed_args.stop_search_radius,
             "add_route_direction": parsed_args.add_route_direction,
             "route_ref_pattern": parsed_args.route_ref_pattern,
+            "osm_file": parsed_args.osm_file,
             "modes": parsed_args.modes,
             "active_on": None
             if parsed_args.include_inactive

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "atlus>=1.0.0",
+    "osmium>=4.3.2",
     "polars>=1.32.0",
     "pydantic>=2.11.7",
     "requests>=2.28.0",

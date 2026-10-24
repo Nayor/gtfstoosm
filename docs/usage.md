@@ -41,6 +41,10 @@ python -m gtfstoosm.cli --input /path/to/gtfs.zip --output output.osc
   - Decrease for more precise matching in dense areas
   - Any value above 10 meters will be ignored because it will take too long to search
 
+#### Offline Data
+
+- `--osm-file FILE`: Read existing stops and the ways followed by the shapes from this OSM extract (anything osmium reads: `.osm.pbf`, `.osm`...) instead of querying Overpass and Valhalla. No network is used, and all modes get their ways. Cut the extract to the area of the feed first (see the README)
+
 #### Modes and Closed Lines
 
 - `--modes MODE [MODE...]`: Modes to convert, among `bus`, `trolleybus`, `tram`, `train`, `light_rail`, `subway`, `monorail`, `funicular`, `ferry`, `aerialway` (default: all of them)
